@@ -17,13 +17,18 @@ Skip the guesswork. These rules are battle-tested, framework-specific, and ready
 **Option A: Use the Setup Wizard (recommended)**
 
 1. Open **your project** in Cursor (not this repo)
-2. Switch to **Agent Mode** 
+2. Switch to **Plan Mode** or **Agent Mode**
 3. Paste the contents of [`SETUP-WIZARD.md`](./SETUP-WIZARD.md) into the chat
-4. If the AI asks what to do, just say **"run it"** or **"execute the wizard"**
-5. Answer a few questions about your stack
-6. Done! The AI creates your `.cursor/rules/` folder automatically
+4. Answer a few questions about your stack
+5. Done! The AI creates your `.cursor/rules/` folder automatically
 
 > **Note:** The wizard must be run from inside your actual project directory, not from this repository.
+
+> [!TIP]
+> **Plan Mode** (recommended) — More structured. The AI analyzes your project, asks focused questions, shows you exactly what will be created, then executes after you confirm.
+
+> [!TIP]
+> **Agent Mode** — More conversational. The AI iterates with you and creates files on the fly. Good if you want to adjust things as you go.
 
 <table>
 <tr>
@@ -122,9 +127,6 @@ The Setup Wizard is a special prompt that turns Cursor into a project analyzer:
 4. **Execution** - Creates `.cursor/rules/` with customized rules
 
 The wizard adapts to your project. Using Supabase? It includes those patterns. TypeScript strict mode? It adjusts accordingly. It's not a one-size-fits-all dump of rules.
-
-> [!TIP]
-> **Why Agent Mode?** The wizard needs to read files and create your rules folder. Agent Mode gives the AI the permissions it needs to analyze your project and write the customized rules.
 
 ---
 
