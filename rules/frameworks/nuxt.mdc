@@ -1,0 +1,415 @@
+---
+description: Nuxt 3/4 best practices with Vue 3, auto-imports, and server components
+globs: ["**/*.vue", "**/*.ts", "pages/**/*", "server/**/*", "composables/**/*"]
+alwaysApply: false
+---
+
+# Nuxt Best Practices
+
+## Overview
+
+| Aspect | Recommendation |
+|--------|----------------|
+| Version | Nuxt 3.x / 4.x |
+| Vue | Vue 3 Composition API |
+| Data Fetching | useFetch / useAsyncData |
+| State | useState / Pinia |
+| Styling | Tailwind CSS or UnoCSS |
+
+---
+
+## Project Structure
+
+```
+app/                      # Nuxt 4 app directory
+├── pages/
+│   ├── index.vue
+│   ├── about.vue
+│   └── users/
+│       ├── index.vue
+│       └── [id].vue
+├── components/
+│   ├── AppHeader.vue
+│   └── ui/
+├── composables/
+│   ├── useAuth.ts
+│   └── useApi.ts
+├── layouts/
+│   ├── default.vue
+│   └── auth.vue
+├── middleware/
+│   └── auth.ts
+└── plugins/
+server/
+├── api/
+│   └── users/
+│       ├── index.get.ts
+│       └── [id].get.ts
+├── middleware/
+└── utils/
+public/
+nuxt.config.ts
+```
+
+---
+
+## Data Fetching
+
+### useFetch (Recommended)
+
+```vue
+<script setup lang="ts">
+// Basic fetch
+const { data: posts, status } = await useFetch('/api/posts')
+
+// With options
+const { data: user, refresh, error } = await useFetch(`/api/users/${id}`, {
+  query: { include: 'profile' },
+  headers: { Authorization: `Bearer ${token}` },
+  transform: (data) => data.user,
+})
+
+// POST request
+const { data } = await useFetch('/api/users', {
+  method: 'POST',
+  body: { name: 'John', email: 'john@example.com' },
+})
+</script>
+
+<template>
+  <div v-if="status === 'pending'">Loading...</div>
+  <div v-else-if="error">Error: {{ error.message }}</div>
+  <div v-else>{{ posts }}</div>
+</template>
+```
+
+### useAsyncData (For Complex Logic)
+
+```vue
+<script setup lang="ts">
+const route = useRoute()
+
+const { data, status, error } = await useAsyncData(
+  `user-${route.params.id}`,
+  async () => {
+    const [user, posts] = await Promise.all([
+      $fetch(`/api/users/${route.params.id}`),
+      $fetch(`/api/users/${route.params.id}/posts`),
+    ])
+    return { user, posts }
+  }
+)
+</script>
+```
+
+### Lazy Fetching (Non-blocking)
+
+```vue
+<script setup lang="ts">
+// Navigation happens immediately, data loads in background
+const { data, status } = await useLazyFetch('/api/heavy-data')
+</script>
+
+<template>
+  <div v-if="status === 'pending'">
+    <Skeleton />
+  </div>
+  <div v-else>
+    {{ data }}
+  </div>
+</template>
+```
+
+---
+
+## Server API Routes
+
+### Basic Handler
+
+```typescript
+// server/api/users/index.get.ts
+export default defineEventHandler(async (event) => {
+  const query = getQuery(event)
+  const users = await prisma.user.findMany({
+    take: Number(query.limit) || 10,
+  })
+  return users
+})
+
+// server/api/users/index.post.ts
+export default defineEventHandler(async (event) => {
+  const body = await readBody(event)
+  const user = await prisma.user.create({ data: body })
+  return user
+})
+
+// server/api/users/[id].get.ts
+export default defineEventHandler(async (event) => {
+  const id = getRouterParam(event, 'id')
+  const user = await prisma.user.findUnique({ where: { id } })
+  
+  if (!user) {
+    throw createError({ statusCode: 404, message: 'User not found' })
+  }
+  
+  return user
+})
+```
+
+### With Validation
+
+```typescript
+// server/api/users/index.post.ts
+import { z } from 'zod'
+
+const schema = z.object({
+  email: z.string().email(),
+  name: z.string().min(2),
+})
+
+export default defineEventHandler(async (event) => {
+  const body = await readValidatedBody(event, schema.parse)
+  return prisma.user.create({ data: body })
+})
+```
+
+---
+
+## Composables
+
+### Custom Composable
+
+```typescript
+// composables/useAuth.ts
+export function useAuth() {
+  const user = useState<User | null>('user', () => null)
+  const isLoggedIn = computed(() => !!user.value)
+
+  async function login(email: string, password: string) {
+    const data = await $fetch('/api/auth/login', {
+      method: 'POST',
+      body: { email, password },
+    })
+    user.value = data.user
+    return data
+  }
+
+  async function logout() {
+    await $fetch('/api/auth/logout', { method: 'POST' })
+    user.value = null
+    navigateTo('/login')
+  }
+
+  return {
+    user: readonly(user),
+    isLoggedIn,
+    login,
+    logout,
+  }
+}
+```
+
+### API Wrapper Composable
+
+```typescript
+// composables/useApi.ts
+export function useApi<T>(url: string, options?: UseFetchOptions<T>) {
+  return useFetch(url, {
+    ...options,
+    $fetch: useRequestFetch(),
+    onResponseError({ response }) {
+      if (response.status === 401) {
+        navigateTo('/login')
+      }
+    },
+  })
+}
+```
+
+---
+
+## State Management
+
+### useState (Simple State)
+
+```vue
+<script setup lang="ts">
+// Shared across components
+const count = useState('counter', () => 0)
+
+function increment() {
+  count.value++
+}
+</script>
+```
+
+### Pinia (Complex State)
+
+```typescript
+// stores/cart.ts
+export const useCartStore = defineStore('cart', () => {
+  const items = ref<CartItem[]>([])
+  
+  const total = computed(() =>
+    items.value.reduce((sum, item) => sum + item.price * item.quantity, 0)
+  )
+
+  function addItem(product: Product) {
+    const existing = items.value.find(i => i.id === product.id)
+    if (existing) {
+      existing.quantity++
+    } else {
+      items.value.push({ ...product, quantity: 1 })
+    }
+  }
+
+  return { items, total, addItem }
+})
+```
+
+---
+
+## Middleware
+
+### Route Middleware
+
+```typescript
+// middleware/auth.ts
+export default defineNuxtRouteMiddleware((to, from) => {
+  const { isLoggedIn } = useAuth()
+
+  if (!isLoggedIn.value && to.path !== '/login') {
+    return navigateTo('/login')
+  }
+})
+```
+
+```vue
+<!-- pages/dashboard.vue -->
+<script setup lang="ts">
+definePageMeta({
+  middleware: 'auth',
+})
+</script>
+```
+
+### Global Middleware
+
+```typescript
+// middleware/01.auth.global.ts
+export default defineNuxtRouteMiddleware((to) => {
+  // Runs on every route change
+})
+```
+
+---
+
+## Layouts
+
+```vue
+<!-- layouts/default.vue -->
+<template>
+  <div class="min-h-screen">
+    <AppHeader />
+    <main class="container mx-auto px-4 py-8">
+      <slot />
+    </main>
+    <AppFooter />
+  </div>
+</template>
+```
+
+```vue
+<!-- pages/auth/login.vue -->
+<script setup lang="ts">
+definePageMeta({
+  layout: 'auth',
+})
+</script>
+```
+
+---
+
+## SEO & Meta
+
+```vue
+<script setup lang="ts">
+const { data: post } = await useFetch(`/api/posts/${route.params.id}`)
+
+useHead({
+  title: post.value?.title,
+  meta: [
+    { name: 'description', content: post.value?.excerpt },
+  ],
+})
+
+useSeoMeta({
+  ogTitle: post.value?.title,
+  ogDescription: post.value?.excerpt,
+  ogImage: post.value?.image,
+})
+</script>
+```
+
+---
+
+## Configuration
+
+```typescript
+// nuxt.config.ts
+export default defineNuxtConfig({
+  devtools: { enabled: true },
+  
+  modules: [
+    '@nuxtjs/tailwindcss',
+    '@pinia/nuxt',
+    '@vueuse/nuxt',
+  ],
+
+  runtimeConfig: {
+    // Server-only
+    apiSecret: '',
+    // Public (exposed to client)
+    public: {
+      apiBase: '',
+    },
+  },
+
+  app: {
+    head: {
+      title: 'My App',
+      link: [{ rel: 'icon', href: '/favicon.ico' }],
+    },
+  },
+})
+```
+
+---
+
+## Commands
+
+```bash
+# Development
+npm run dev                # Start dev server
+
+# Build
+npm run build              # Production build
+npm run generate           # Static generation
+npm run preview            # Preview production build
+
+# Type checking
+npm run typecheck
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Not using auto-imports | Components/composables auto-import |
+| Blocking navigation | Use `useLazyFetch` for heavy data |
+| Wrong fetch in server | Use `$fetch`, not `useFetch` in server |
+| Missing error handling | Always handle `error` from useFetch |
+| State not shared | Use `useState` with unique key |
+| Direct `fetch` calls | Use `$fetch` for proper typing |

@@ -1,0 +1,389 @@
+---
+description: Supabase best practices for Auth, Database, RLS, Edge Functions, and Realtime
+globs: ["**/*.ts", "**/*.tsx", "supabase/**/*", "src/**/*"]
+alwaysApply: false
+---
+
+# Supabase Best Practices
+
+## Overview
+
+| Feature | Use Case |
+|---------|----------|
+| Auth | User authentication and authorization |
+| Database | PostgreSQL with instant APIs |
+| RLS | Row Level Security for data protection |
+| Edge Functions | Serverless functions (Deno) |
+| Realtime | Live data subscriptions |
+| Storage | File uploads and management |
+
+---
+
+## Client Setup
+
+### Next.js / React
+
+```typescript
+// lib/supabase/client.ts
+import { createBrowserClient } from '@supabase/ssr'
+
+export function createClient() {
+  return createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
+}
+```
+
+### Server-Side (Next.js App Router)
+
+```typescript
+// lib/supabase/server.ts
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
+
+export async function createClient() {
+  const cookieStore = await cookies()
+
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll()
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) =>
+            cookieStore.set(name, value, options)
+          )
+        },
+      },
+    }
+  )
+}
+```
+
+---
+
+## Authentication
+
+### Sign Up / Sign In
+
+```typescript
+const supabase = createClient()
+
+// Sign up
+const { data, error } = await supabase.auth.signUp({
+  email: 'user@example.com',
+  password: 'secure-password',
+})
+
+// Sign in
+const { data, error } = await supabase.auth.signInWithPassword({
+  email: 'user@example.com',
+  password: 'secure-password',
+})
+
+// Sign in with OAuth
+const { data, error } = await supabase.auth.signInWithOAuth({
+  provider: 'google',
+  options: {
+    redirectTo: `${window.location.origin}/auth/callback`,
+  },
+})
+
+// Sign out
+await supabase.auth.signOut()
+```
+
+### Get Current User
+
+```typescript
+// Client-side
+const { data: { user } } = await supabase.auth.getUser()
+
+// Server-side (recommended for security)
+const supabase = await createClient()
+const { data: { user } } = await supabase.auth.getUser()
+
+if (!user) {
+  redirect('/login')
+}
+```
+
+---
+
+## Row Level Security (RLS)
+
+### Always Enable RLS
+
+```sql
+-- Enable RLS on table
+ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
+
+-- Users can only see their own posts
+CREATE POLICY "Users can view own posts"
+ON posts FOR SELECT
+USING (auth.uid() = user_id);
+
+-- Users can insert their own posts
+CREATE POLICY "Users can insert own posts"
+ON posts FOR INSERT
+WITH CHECK (auth.uid() = user_id);
+
+-- Users can update their own posts
+CREATE POLICY "Users can update own posts"
+ON posts FOR UPDATE
+USING (auth.uid() = user_id)
+WITH CHECK (auth.uid() = user_id);
+
+-- Users can delete their own posts
+CREATE POLICY "Users can delete own posts"
+ON posts FOR DELETE
+USING (auth.uid() = user_id);
+```
+
+### Public Read, Authenticated Write
+
+```sql
+-- Anyone can read
+CREATE POLICY "Public read access"
+ON posts FOR SELECT
+USING (true);
+
+-- Only authenticated users can insert
+CREATE POLICY "Authenticated insert"
+ON posts FOR INSERT
+WITH CHECK (auth.role() = 'authenticated');
+```
+
+### Role-Based Access
+
+```sql
+-- Check user role from profiles table
+CREATE POLICY "Admin full access"
+ON posts FOR ALL
+USING (
+  EXISTS (
+    SELECT 1 FROM profiles
+    WHERE profiles.id = auth.uid()
+    AND profiles.role = 'admin'
+  )
+);
+```
+
+---
+
+## Database Queries
+
+### Basic CRUD
+
+```typescript
+const supabase = createClient()
+
+// Select
+const { data, error } = await supabase
+  .from('posts')
+  .select('*')
+  .eq('published', true)
+  .order('created_at', { ascending: false })
+  .limit(10)
+
+// Select with relations
+const { data, error } = await supabase
+  .from('posts')
+  .select(`
+    *,
+    author:profiles(name, avatar_url),
+    comments(id, content)
+  `)
+
+// Insert
+const { data, error } = await supabase
+  .from('posts')
+  .insert({ title: 'New Post', content: '...' })
+  .select()
+  .single()
+
+// Update
+const { data, error } = await supabase
+  .from('posts')
+  .update({ title: 'Updated Title' })
+  .eq('id', postId)
+  .select()
+  .single()
+
+// Delete
+const { error } = await supabase
+  .from('posts')
+  .delete()
+  .eq('id', postId)
+```
+
+### Type Safety
+
+```typescript
+// Generate types: npx supabase gen types typescript --local > types/supabase.ts
+
+import { Database } from '@/types/supabase'
+
+type Post = Database['public']['Tables']['posts']['Row']
+type PostInsert = Database['public']['Tables']['posts']['Insert']
+
+// Typed client
+const supabase = createClient<Database>()
+
+const { data } = await supabase
+  .from('posts')
+  .select('*')
+// data is Post[] | null
+```
+
+---
+
+## Edge Functions
+
+### Create Function
+
+```typescript
+// supabase/functions/hello/index.ts
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+
+serve(async (req) => {
+  const { name } = await req.json()
+
+  return new Response(
+    JSON.stringify({ message: `Hello ${name}!` }),
+    { headers: { 'Content-Type': 'application/json' } }
+  )
+})
+```
+
+### Call Function
+
+```typescript
+const { data, error } = await supabase.functions.invoke('hello', {
+  body: { name: 'World' },
+})
+```
+
+### With Auth
+
+```typescript
+// Edge function - get user
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+serve(async (req) => {
+  const authHeader = req.headers.get('Authorization')!
+  
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_ANON_KEY')!,
+    { global: { headers: { Authorization: authHeader } } }
+  )
+
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) {
+    return new Response('Unauthorized', { status: 401 })
+  }
+
+  // Process authenticated request
+  return new Response(JSON.stringify({ userId: user.id }))
+})
+```
+
+---
+
+## Realtime
+
+### Subscribe to Changes
+
+```typescript
+const supabase = createClient()
+
+// Subscribe to inserts
+const channel = supabase
+  .channel('posts')
+  .on(
+    'postgres_changes',
+    { event: 'INSERT', schema: 'public', table: 'posts' },
+    (payload) => {
+      console.log('New post:', payload.new)
+    }
+  )
+  .subscribe()
+
+// Cleanup
+channel.unsubscribe()
+```
+
+### Filtered Subscriptions
+
+```typescript
+// Only changes for specific user
+const channel = supabase
+  .channel('user-posts')
+  .on(
+    'postgres_changes',
+    {
+      event: '*',
+      schema: 'public',
+      table: 'posts',
+      filter: `user_id=eq.${userId}`,
+    },
+    (payload) => {
+      console.log('Change:', payload)
+    }
+  )
+  .subscribe()
+```
+
+---
+
+## Storage
+
+### Upload Files
+
+```typescript
+const supabase = createClient()
+
+// Upload file
+const { data, error } = await supabase.storage
+  .from('avatars')
+  .upload(`${userId}/avatar.png`, file, {
+    cacheControl: '3600',
+    upsert: true,
+  })
+
+// Get public URL
+const { data: { publicUrl } } = supabase.storage
+  .from('avatars')
+  .getPublicUrl(`${userId}/avatar.png`)
+```
+
+### Storage Policies
+
+```sql
+-- Allow users to upload to their own folder
+CREATE POLICY "Users can upload own avatar"
+ON storage.objects FOR INSERT
+WITH CHECK (
+  bucket_id = 'avatars' AND
+  auth.uid()::text = (storage.foldername(name))[1]
+);
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Not enabling RLS | Always enable RLS on all tables |
+| Using service key client-side | Only use anon key on client |
+| Not typing queries | Generate and use TypeScript types |
+| Ignoring errors | Always check error responses |
+| Not using server client | Use SSR client for auth checks |
+| Storing secrets in functions | Use Supabase Vault for secrets |

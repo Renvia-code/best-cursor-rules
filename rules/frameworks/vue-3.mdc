@@ -1,0 +1,364 @@
+---
+description: Vue 3 Composition API best practices with script setup, Pinia, and TypeScript
+globs: ["**/*.vue", "src/**/*.ts", "src/composables/**/*"]
+alwaysApply: false
+---
+
+# Vue 3 Best Practices
+
+## Overview
+
+| Aspect | Recommendation |
+|--------|----------------|
+| API Style | Composition API with `<script setup>` |
+| State Management | Pinia |
+| Language | TypeScript |
+| Build Tool | Vite |
+
+---
+
+## Script Setup (Recommended)
+
+### ✅ DO: Use `<script setup>` syntax
+
+```vue
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+import type { User } from '@/types'
+
+// Props
+const props = defineProps<{
+  user: User
+  showEmail?: boolean
+}>()
+
+// Emits
+const emit = defineEmits<{
+  (e: 'update', value: string): void
+  (e: 'delete'): void
+}>()
+
+// Reactive state
+const count = ref(0)
+const doubled = computed(() => count.value * 2)
+
+// Methods
+function increment() {
+  count.value++
+}
+</script>
+
+<template>
+  <div>
+    <h2>{{ user.name }}</h2>
+    <p v-if="showEmail">{{ user.email }}</p>
+    <button @click="increment">Count: {{ count }}</button>
+  </div>
+</template>
+```
+
+---
+
+## Props and Emits
+
+### Props with Defaults
+
+```vue
+<script setup lang="ts">
+interface Props {
+  title: string
+  count?: number
+  items?: string[]
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  count: 0,
+  items: () => []
+})
+</script>
+```
+
+### Typed Emits
+
+```vue
+<script setup lang="ts">
+const emit = defineEmits<{
+  (e: 'change', id: number): void
+  (e: 'update:modelValue', value: string): void
+}>()
+
+function handleChange(id: number) {
+  emit('change', id)
+}
+</script>
+```
+
+---
+
+## Reactivity
+
+### ref vs reactive
+
+```typescript
+import { ref, reactive } from 'vue'
+
+// ✅ Use ref for primitives
+const count = ref(0)
+const name = ref('')
+
+// ✅ Use reactive for objects (optional)
+const state = reactive({
+  users: [],
+  loading: false
+})
+
+// ✅ Access ref values with .value in script
+count.value++
+
+// Template auto-unwraps refs
+// <span>{{ count }}</span>  ← No .value needed
+```
+
+### Computed Properties
+
+```vue
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+
+const firstName = ref('John')
+const lastName = ref('Doe')
+
+// Read-only computed
+const fullName = computed(() => `${firstName.value} ${lastName.value}`)
+
+// Writable computed
+const fullNameWritable = computed({
+  get: () => `${firstName.value} ${lastName.value}`,
+  set: (value: string) => {
+    const [first, last] = value.split(' ')
+    firstName.value = first
+    lastName.value = last
+  }
+})
+</script>
+```
+
+---
+
+## Composables
+
+### Creating a Composable
+
+```typescript
+// composables/useFetch.ts
+import { ref, watchEffect } from 'vue'
+
+export function useFetch<T>(url: string) {
+  const data = ref<T | null>(null)
+  const error = ref<Error | null>(null)
+  const loading = ref(true)
+
+  watchEffect(async () => {
+    loading.value = true
+    try {
+      const response = await fetch(url)
+      data.value = await response.json()
+    } catch (e) {
+      error.value = e as Error
+    } finally {
+      loading.value = false
+    }
+  })
+
+  return { data, error, loading }
+}
+```
+
+### Using Composables
+
+```vue
+<script setup lang="ts">
+import { useFetch } from '@/composables/useFetch'
+
+const { data: users, loading, error } = useFetch<User[]>('/api/users')
+</script>
+
+<template>
+  <div v-if="loading">Loading...</div>
+  <div v-else-if="error">Error: {{ error.message }}</div>
+  <ul v-else>
+    <li v-for="user in users" :key="user.id">{{ user.name }}</li>
+  </ul>
+</template>
+```
+
+---
+
+## Pinia State Management
+
+### Define a Store
+
+```typescript
+// stores/user.ts
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+
+export const useUserStore = defineStore('user', () => {
+  // State
+  const user = ref<User | null>(null)
+  const loading = ref(false)
+
+  // Getters
+  const isLoggedIn = computed(() => !!user.value)
+  const displayName = computed(() => user.value?.name ?? 'Guest')
+
+  // Actions
+  async function login(email: string, password: string) {
+    loading.value = true
+    try {
+      user.value = await api.login(email, password)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  function logout() {
+    user.value = null
+  }
+
+  return { user, loading, isLoggedIn, displayName, login, logout }
+})
+```
+
+### Using the Store
+
+```vue
+<script setup lang="ts">
+import { useUserStore } from '@/stores/user'
+
+const userStore = useUserStore()
+
+// Access state
+// userStore.user
+// userStore.isLoggedIn
+
+// Call actions
+// userStore.login(email, password)
+</script>
+```
+
+---
+
+## Lifecycle Hooks
+
+```vue
+<script setup lang="ts">
+import { onMounted, onUnmounted, onBeforeMount } from 'vue'
+
+onBeforeMount(() => {
+  // Before component mounts
+})
+
+onMounted(() => {
+  // Component mounted - DOM available
+  console.log('Component mounted')
+})
+
+onUnmounted(() => {
+  // Cleanup - remove listeners, etc.
+})
+</script>
+```
+
+---
+
+## Template Patterns
+
+### Conditional Rendering
+
+```vue
+<template>
+  <!-- v-if for conditional blocks -->
+  <div v-if="loading">Loading...</div>
+  <div v-else-if="error">Error occurred</div>
+  <div v-else>{{ data }}</div>
+
+  <!-- v-show for frequent toggles (keeps in DOM) -->
+  <div v-show="isVisible">Toggle me</div>
+</template>
+```
+
+### List Rendering
+
+```vue
+<template>
+  <!-- Always use :key with v-for -->
+  <ul>
+    <li v-for="item in items" :key="item.id">
+      {{ item.name }}
+    </li>
+  </ul>
+
+  <!-- With index (only if no unique id) -->
+  <div v-for="(item, index) in items" :key="index">
+    {{ item }}
+  </div>
+</template>
+```
+
+### Event Handling
+
+```vue
+<template>
+  <!-- Basic -->
+  <button @click="handleClick">Click</button>
+
+  <!-- With modifiers -->
+  <form @submit.prevent="handleSubmit">
+    <input @keyup.enter="search" />
+  </form>
+
+  <!-- Pass event -->
+  <input @input="handleInput($event)" />
+</template>
+```
+
+---
+
+## TypeScript Integration
+
+### Type Annotations
+
+```vue
+<script setup lang="ts">
+import type { Ref } from 'vue'
+
+// Typed refs
+const count: Ref<number> = ref(0)
+const user = ref<User | null>(null)
+
+// Typed template refs
+const inputRef = ref<HTMLInputElement | null>(null)
+
+onMounted(() => {
+  inputRef.value?.focus()
+})
+</script>
+
+<template>
+  <input ref="inputRef" />
+</template>
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Forgetting `.value` in script | Always use `.value` for refs |
+| Destructuring reactive objects | Use `toRefs()` or access directly |
+| Missing `:key` in v-for | Always provide unique key |
+| Mutating props | Emit events to parent instead |
+| Not using `<script setup>` | Migrate from Options API |
+| Large monolithic components | Extract composables and child components |

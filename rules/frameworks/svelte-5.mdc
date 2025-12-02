@@ -1,0 +1,378 @@
+---
+description: Svelte 5 best practices with Runes, new reactivity system, and modern patterns
+globs: ["**/*.svelte", "**/*.svelte.ts", "src/**/*.ts"]
+alwaysApply: false
+---
+
+# Svelte 5 Best Practices
+
+## Overview
+
+| Feature | Svelte 5 |
+|---------|----------|
+| Reactivity | Runes ($state, $derived, $effect) |
+| Props | $props() rune |
+| Events | Callback props |
+| Snippets | Replace slots |
+
+---
+
+## Runes (New Reactivity System)
+
+### $state - Reactive State
+
+```svelte
+<script>
+  // Simple state
+  let count = $state(0)
+  
+  // Object state (deeply reactive)
+  let user = $state({
+    name: 'John',
+    email: 'john@example.com'
+  })
+  
+  function increment() {
+    count++  // Direct mutation works
+  }
+  
+  function updateName(name) {
+    user.name = name  // Deep reactivity
+  }
+</script>
+
+<button onclick={increment}>
+  Count: {count}
+</button>
+```
+
+### $derived - Computed Values
+
+```svelte
+<script>
+  let count = $state(0)
+  let doubled = $derived(count * 2)
+  
+  // Complex derivations
+  let items = $state([1, 2, 3, 4, 5])
+  let total = $derived(items.reduce((a, b) => a + b, 0))
+  let evenItems = $derived(items.filter(n => n % 2 === 0))
+</script>
+
+<p>Count: {count}, Doubled: {doubled}</p>
+```
+
+### $effect - Side Effects
+
+```svelte
+<script>
+  let count = $state(0)
+  
+  // Runs when dependencies change
+  $effect(() => {
+    console.log('Count changed:', count)
+    
+    // Cleanup function (optional)
+    return () => {
+      console.log('Cleaning up')
+    }
+  })
+  
+  // Pre-effect (runs before DOM updates)
+  $effect.pre(() => {
+    // Useful for measuring DOM before updates
+  })
+</script>
+```
+
+---
+
+## Props
+
+### Basic Props with $props()
+
+```svelte
+<script>
+  let { name, count = 0, onUpdate } = $props()
+</script>
+
+<div>
+  <h2>{name}</h2>
+  <p>Count: {count}</p>
+  <button onclick={() => onUpdate?.(count + 1)}>
+    Increment
+  </button>
+</div>
+```
+
+### TypeScript Props
+
+```svelte
+<script lang="ts">
+  interface Props {
+    name: string
+    count?: number
+    onUpdate?: (value: number) => void
+  }
+  
+  let { name, count = 0, onUpdate }: Props = $props()
+</script>
+```
+
+### Spread Props
+
+```svelte
+<script>
+  let { class: className, ...rest } = $props()
+</script>
+
+<div class={className} {...rest}>
+  Content
+</div>
+```
+
+---
+
+## Event Handling
+
+### Svelte 5: Callback Props (Not createEventDispatcher)
+
+```svelte
+<!-- Child.svelte -->
+<script>
+  let { onClick, onSubmit } = $props()
+</script>
+
+<button onclick={onClick}>Click me</button>
+
+<!-- Parent.svelte -->
+<script>
+  import Child from './Child.svelte'
+  
+  function handleClick() {
+    console.log('Clicked!')
+  }
+</script>
+
+<Child onClick={handleClick} />
+```
+
+### Event Modifiers
+
+```svelte
+<!-- Use wrapper functions instead of modifiers -->
+<script>
+  function handleSubmit(event) {
+    event.preventDefault()
+    // Handle form
+  }
+  
+  function handleClickOnce(event) {
+    // Handle once logic manually or use action
+  }
+</script>
+
+<form onsubmit={handleSubmit}>
+  <button type="submit">Submit</button>
+</form>
+```
+
+---
+
+## Snippets (Replace Slots)
+
+### Basic Snippets
+
+```svelte
+<!-- Card.svelte -->
+<script>
+  let { header, children } = $props()
+</script>
+
+<div class="card">
+  {#if header}
+    <div class="card-header">
+      {@render header()}
+    </div>
+  {/if}
+  <div class="card-body">
+    {@render children()}
+  </div>
+</div>
+
+<!-- Usage -->
+<Card>
+  {#snippet header()}
+    <h2>Card Title</h2>
+  {/snippet}
+  
+  <p>Card content goes here</p>
+</Card>
+```
+
+### Snippets with Parameters
+
+```svelte
+<!-- List.svelte -->
+<script>
+  let { items, renderItem } = $props()
+</script>
+
+<ul>
+  {#each items as item}
+    <li>{@render renderItem(item)}</li>
+  {/each}
+</ul>
+
+<!-- Usage -->
+<List {items}>
+  {#snippet renderItem(item)}
+    <span>{item.name}</span>
+  {/snippet}
+</List>
+```
+
+---
+
+## Control Flow
+
+### Conditionals
+
+```svelte
+{#if condition}
+  <p>True</p>
+{:else if otherCondition}
+  <p>Other</p>
+{:else}
+  <p>False</p>
+{/if}
+```
+
+### Loops
+
+```svelte
+{#each items as item (item.id)}
+  <div>{item.name}</div>
+{:else}
+  <p>No items</p>
+{/each}
+
+<!-- With index -->
+{#each items as item, index (item.id)}
+  <div>{index}: {item.name}</div>
+{/each}
+```
+
+### Await Blocks
+
+```svelte
+{#await fetchData()}
+  <p>Loading...</p>
+{:then data}
+  <p>{data.message}</p>
+{:catch error}
+  <p>Error: {error.message}</p>
+{/await}
+```
+
+---
+
+## Component Patterns
+
+### Bindable Props
+
+```svelte
+<!-- Input.svelte -->
+<script>
+  let { value = $bindable() } = $props()
+</script>
+
+<input bind:value />
+
+<!-- Usage -->
+<script>
+  let name = $state('')
+</script>
+
+<Input bind:value={name} />
+```
+
+### Actions
+
+```svelte
+<script>
+  function tooltip(node, text) {
+    // Setup
+    const tip = document.createElement('div')
+    tip.textContent = text
+    
+    function show() {
+      document.body.appendChild(tip)
+    }
+    
+    function hide() {
+      tip.remove()
+    }
+    
+    node.addEventListener('mouseenter', show)
+    node.addEventListener('mouseleave', hide)
+    
+    return {
+      update(newText) {
+        tip.textContent = newText
+      },
+      destroy() {
+        node.removeEventListener('mouseenter', show)
+        node.removeEventListener('mouseleave', hide)
+      }
+    }
+  }
+</script>
+
+<button use:tooltip={'Hello!'}>Hover me</button>
+```
+
+---
+
+## Stores (Still Valid)
+
+```typescript
+// stores/count.ts
+import { writable } from 'svelte/store'
+
+export const count = writable(0)
+
+// Usage in component
+<script>
+  import { count } from './stores/count'
+</script>
+
+<button onclick={() => $count++}>
+  Count: {$count}
+</button>
+```
+
+---
+
+## Migration from Svelte 4
+
+| Svelte 4 | Svelte 5 |
+|----------|----------|
+| `let count = 0` | `let count = $state(0)` |
+| `$: doubled = count * 2` | `let doubled = $derived(count * 2)` |
+| `$: { sideEffect() }` | `$effect(() => { sideEffect() })` |
+| `export let prop` | `let { prop } = $props()` |
+| `<slot />` | `{@render children()}` |
+| `createEventDispatcher` | Callback props |
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Using `$:` reactive statements | Use `$derived` or `$effect` |
+| Using `export let` for props | Use `$props()` |
+| Using `<slot>` | Use snippets with `{@render}` |
+| Using `createEventDispatcher` | Use callback props |
+| Forgetting to migrate stores | Stores still work, but consider $state |

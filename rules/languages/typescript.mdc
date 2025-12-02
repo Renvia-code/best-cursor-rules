@@ -1,0 +1,335 @@
+---
+description: TypeScript best practices with strict mode, type patterns, and modern conventions
+globs: ["**/*.ts", "**/*.tsx", "**/*.d.ts"]
+alwaysApply: false
+---
+
+# TypeScript Best Practices
+
+## Overview
+
+| Setting | Recommendation |
+|---------|----------------|
+| Strict Mode | Always enabled |
+| Target | ES2022+ |
+| Module | ESNext |
+| No `any` | Use `unknown` instead |
+
+---
+
+## Type Fundamentals
+
+### Prefer interface for Objects
+
+```typescript
+// ✅ Use interface for object shapes
+interface User {
+  id: string
+  name: string
+  email: string
+}
+
+// ✅ Use type for unions, intersections, primitives
+type Status = 'pending' | 'active' | 'inactive'
+type ID = string | number
+type UserWithRole = User & { role: string }
+```
+
+### Avoid `any`, Use `unknown`
+
+```typescript
+// ❌ Bad - any bypasses type checking
+function process(data: any) {
+  return data.something  // No error, but unsafe
+}
+
+// ✅ Good - unknown requires type checking
+function process(data: unknown) {
+  if (typeof data === 'object' && data !== null && 'something' in data) {
+    return (data as { something: string }).something
+  }
+  throw new Error('Invalid data')
+}
+```
+
+---
+
+## Strict Mode Settings
+
+```json
+// tsconfig.json
+{
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true
+  }
+}
+```
+
+---
+
+## Type Patterns
+
+### Discriminated Unions
+
+```typescript
+// ✅ Use discriminated unions for state
+type AsyncState<T> =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; data: T }
+  | { status: 'error'; error: Error }
+
+function handle<T>(state: AsyncState<T>) {
+  switch (state.status) {
+    case 'idle':
+      return 'Ready'
+    case 'loading':
+      return 'Loading...'
+    case 'success':
+      return state.data  // TypeScript knows data exists
+    case 'error':
+      return state.error.message
+  }
+}
+```
+
+### Const Assertions
+
+```typescript
+// ✅ Use as const for literal types
+const ROLES = ['admin', 'user', 'guest'] as const
+type Role = typeof ROLES[number]  // 'admin' | 'user' | 'guest'
+
+const CONFIG = {
+  api: 'https://api.example.com',
+  timeout: 5000,
+} as const
+```
+
+### Template Literal Types
+
+```typescript
+type EventName = 'click' | 'focus' | 'blur'
+type Handler = `on${Capitalize<EventName>}`  // 'onClick' | 'onFocus' | 'onBlur'
+
+type Route = `/${string}`
+type APIEndpoint = `/api/${string}`
+```
+
+---
+
+## Utility Types
+
+### Built-in Utilities
+
+```typescript
+interface User {
+  id: string
+  name: string
+  email: string
+  role: 'admin' | 'user'
+}
+
+// Pick specific properties
+type UserPreview = Pick<User, 'id' | 'name'>
+
+// Omit properties
+type UserWithoutRole = Omit<User, 'role'>
+
+// Make all optional
+type PartialUser = Partial<User>
+
+// Make all required
+type RequiredUser = Required<User>
+
+// Make all readonly
+type ReadonlyUser = Readonly<User>
+
+// Record type
+type UsersByRole = Record<User['role'], User[]>
+```
+
+### Custom Utility Types
+
+```typescript
+// Make specific properties optional
+type PartialBy<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>
+
+// Make specific properties required
+type RequiredBy<T, K extends keyof T> = Omit<T, K> & Required<Pick<T, K>>
+
+// Extract non-nullable
+type NonNullableProps<T> = {
+  [K in keyof T]: NonNullable<T[K]>
+}
+```
+
+---
+
+## Generics
+
+### Basic Generics
+
+```typescript
+// ✅ Generic function
+function first<T>(arr: T[]): T | undefined {
+  return arr[0]
+}
+
+// ✅ Generic with constraints
+function getProperty<T, K extends keyof T>(obj: T, key: K): T[K] {
+  return obj[key]
+}
+
+// ✅ Generic interface
+interface Repository<T> {
+  find(id: string): Promise<T | null>
+  findAll(): Promise<T[]>
+  create(data: Omit<T, 'id'>): Promise<T>
+  update(id: string, data: Partial<T>): Promise<T>
+  delete(id: string): Promise<void>
+}
+```
+
+### Generic Defaults
+
+```typescript
+interface ApiResponse<T = unknown> {
+  data: T
+  status: number
+  message: string
+}
+
+// Uses default
+const response: ApiResponse = { data: {}, status: 200, message: 'OK' }
+
+// Explicit type
+const userResponse: ApiResponse<User> = { data: user, status: 200, message: 'OK' }
+```
+
+---
+
+## Type Guards
+
+### Custom Type Guards
+
+```typescript
+interface Dog {
+  type: 'dog'
+  bark(): void
+}
+
+interface Cat {
+  type: 'cat'
+  meow(): void
+}
+
+type Animal = Dog | Cat
+
+// Type guard function
+function isDog(animal: Animal): animal is Dog {
+  return animal.type === 'dog'
+}
+
+function makeSound(animal: Animal) {
+  if (isDog(animal)) {
+    animal.bark()  // TypeScript knows it's a Dog
+  } else {
+    animal.meow()  // TypeScript knows it's a Cat
+  }
+}
+```
+
+### Assertion Functions
+
+```typescript
+function assertIsString(value: unknown): asserts value is string {
+  if (typeof value !== 'string') {
+    throw new Error('Value must be a string')
+  }
+}
+
+function process(value: unknown) {
+  assertIsString(value)
+  // TypeScript knows value is string here
+  return value.toUpperCase()
+}
+```
+
+---
+
+## Function Types
+
+### Function Overloads
+
+```typescript
+// Overloads
+function createElement(tag: 'div'): HTMLDivElement
+function createElement(tag: 'span'): HTMLSpanElement
+function createElement(tag: 'a'): HTMLAnchorElement
+function createElement(tag: string): HTMLElement
+
+// Implementation
+function createElement(tag: string): HTMLElement {
+  return document.createElement(tag)
+}
+```
+
+### Arrow Functions
+
+```typescript
+// ✅ Typed arrow function
+const add = (a: number, b: number): number => a + b
+
+// ✅ Generic arrow function
+const identity = <T>(value: T): T => value
+
+// ✅ Async arrow function
+const fetchUser = async (id: string): Promise<User> => {
+  const response = await fetch(`/api/users/${id}`)
+  return response.json()
+}
+```
+
+---
+
+## Module Patterns
+
+### Barrel Exports
+
+```typescript
+// components/index.ts
+export { Button } from './Button'
+export { Input } from './Input'
+export { Modal } from './Modal'
+export type { ButtonProps } from './Button'
+export type { InputProps } from './Input'
+```
+
+### Type-only Imports
+
+```typescript
+// ✅ Import types separately
+import type { User, Post } from '@/types'
+import { getUser, getPosts } from '@/api'
+
+// ✅ Or inline
+import { getUser, type User } from '@/api'
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Using `any` | Use `unknown` and narrow the type |
+| Not using strict mode | Enable `"strict": true` |
+| Type assertions everywhere | Use type guards instead |
+| Ignoring `null`/`undefined` | Handle with optional chaining or guards |
+| Enums | Use const objects with `as const` |
+| `interface` for everything | Use `type` for unions and primitives |

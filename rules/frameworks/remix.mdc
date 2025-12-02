@@ -1,0 +1,439 @@
+---
+description: Remix best practices with loaders, actions, and progressive enhancement
+globs: ["**/*.tsx", "**/*.ts", "app/**/*"]
+alwaysApply: false
+---
+
+# Remix Best Practices
+
+## Overview
+
+| Aspect | Recommendation |
+|--------|----------------|
+| Version | Remix v2 / React Router v7 |
+| Data Loading | Loaders |
+| Mutations | Actions |
+| Forms | `<Form>` with progressive enhancement |
+| Styling | Tailwind CSS |
+
+---
+
+## Project Structure
+
+```
+app/
+├── routes/
+│   ├── _index.tsx           # Home route (/)
+│   ├── about.tsx            # /about
+│   ├── users._index.tsx     # /users
+│   ├── users.$id.tsx        # /users/:id
+│   ├── users.$id.edit.tsx   # /users/:id/edit
+│   └── api.users.tsx        # /api/users (resource route)
+├── components/
+│   ├── ui/
+│   └── ...
+├── lib/
+│   ├── db.server.ts
+│   └── session.server.ts
+├── root.tsx
+└── entry.server.tsx
+```
+
+---
+
+## Loaders (Data Fetching)
+
+### Basic Loader
+
+```tsx
+// app/routes/users._index.tsx
+import type { LoaderFunctionArgs } from '@remix-run/node'
+import { json } from '@remix-run/node'
+import { useLoaderData } from '@remix-run/react'
+import { db } from '~/lib/db.server'
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  const url = new URL(request.url)
+  const page = Number(url.searchParams.get('page')) || 1
+  
+  const users = await db.user.findMany({
+    take: 20,
+    skip: (page - 1) * 20,
+  })
+  
+  return json({ users, page })
+}
+
+export default function UsersPage() {
+  const { users, page } = useLoaderData<typeof loader>()
+  
+  return (
+    <div>
+      <h1>Users</h1>
+      <ul>
+        {users.map((user) => (
+          <li key={user.id}>{user.name}</li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+```
+
+### Loader with Params
+
+```tsx
+// app/routes/users.$id.tsx
+import type { LoaderFunctionArgs } from '@remix-run/node'
+import { json } from '@remix-run/node'
+import { useLoaderData } from '@remix-run/react'
+import invariant from 'tiny-invariant'
+
+export async function loader({ params }: LoaderFunctionArgs) {
+  invariant(params.id, 'Missing user ID')
+  
+  const user = await db.user.findUnique({
+    where: { id: params.id },
+  })
+  
+  if (!user) {
+    throw new Response('Not Found', { status: 404 })
+  }
+  
+  return json({ user })
+}
+```
+
+### Protected Loader
+
+```tsx
+// app/routes/dashboard.tsx
+import { redirect } from '@remix-run/node'
+import { getUser } from '~/lib/session.server'
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  const user = await getUser(request)
+  
+  if (!user) {
+    return redirect('/login')
+  }
+  
+  const data = await getDashboardData(user.id)
+  return json({ user, data })
+}
+```
+
+---
+
+## Actions (Mutations)
+
+### Basic Action
+
+```tsx
+// app/routes/users.new.tsx
+import type { ActionFunctionArgs } from '@remix-run/node'
+import { redirect, json } from '@remix-run/node'
+import { Form, useActionData } from '@remix-run/react'
+import { z } from 'zod'
+
+const schema = z.object({
+  name: z.string().min(2),
+  email: z.string().email(),
+})
+
+export async function action({ request }: ActionFunctionArgs) {
+  const formData = await request.formData()
+  const data = Object.fromEntries(formData)
+  
+  const result = schema.safeParse(data)
+  
+  if (!result.success) {
+    return json(
+      { errors: result.error.flatten().fieldErrors },
+      { status: 400 }
+    )
+  }
+  
+  const user = await db.user.create({ data: result.data })
+  return redirect(`/users/${user.id}`)
+}
+
+export default function NewUser() {
+  const actionData = useActionData<typeof action>()
+  
+  return (
+    <Form method="post">
+      <div>
+        <label htmlFor="name">Name</label>
+        <input type="text" name="name" id="name" required />
+        {actionData?.errors?.name && (
+          <p className="text-red-500">{actionData.errors.name}</p>
+        )}
+      </div>
+      
+      <div>
+        <label htmlFor="email">Email</label>
+        <input type="email" name="email" id="email" required />
+        {actionData?.errors?.email && (
+          <p className="text-red-500">{actionData.errors.email}</p>
+        )}
+      </div>
+      
+      <button type="submit">Create User</button>
+    </Form>
+  )
+}
+```
+
+### Multiple Actions with Intent
+
+```tsx
+export async function action({ request }: ActionFunctionArgs) {
+  const formData = await request.formData()
+  const intent = formData.get('intent')
+  
+  switch (intent) {
+    case 'update':
+      return updateUser(formData)
+    case 'delete':
+      return deleteUser(formData)
+    default:
+      throw new Response('Invalid intent', { status: 400 })
+  }
+}
+
+export default function UserPage() {
+  return (
+    <div>
+      <Form method="post">
+        <input type="hidden" name="intent" value="update" />
+        {/* form fields */}
+        <button type="submit">Update</button>
+      </Form>
+      
+      <Form method="post">
+        <input type="hidden" name="intent" value="delete" />
+        <button type="submit">Delete</button>
+      </Form>
+    </div>
+  )
+}
+```
+
+---
+
+## useFetcher (No Navigation)
+
+```tsx
+import { useFetcher } from '@remix-run/react'
+
+function DeleteButton({ id }: { id: string }) {
+  const fetcher = useFetcher()
+  const isDeleting = fetcher.state !== 'idle'
+  
+  return (
+    <fetcher.Form method="post" action={`/users/${id}/delete`}>
+      <button type="submit" disabled={isDeleting}>
+        {isDeleting ? 'Deleting...' : 'Delete'}
+      </button>
+    </fetcher.Form>
+  )
+}
+
+// Load data without navigation
+function UserPopover({ userId }: { userId: string }) {
+  const fetcher = useFetcher<{ user: User }>()
+  
+  useEffect(() => {
+    if (fetcher.state === 'idle' && !fetcher.data) {
+      fetcher.load(`/api/users/${userId}`)
+    }
+  }, [fetcher, userId])
+  
+  if (!fetcher.data) return <Skeleton />
+  
+  return <UserCard user={fetcher.data.user} />
+}
+```
+
+---
+
+## Form Patterns
+
+### With Navigation State
+
+```tsx
+import { Form, useNavigation } from '@remix-run/react'
+
+export default function ContactForm() {
+  const navigation = useNavigation()
+  const isSubmitting = navigation.state === 'submitting'
+  
+  return (
+    <Form method="post">
+      <input name="email" type="email" disabled={isSubmitting} />
+      <button type="submit" disabled={isSubmitting}>
+        {isSubmitting ? 'Sending...' : 'Send'}
+      </button>
+    </Form>
+  )
+}
+```
+
+### Optimistic UI
+
+```tsx
+function TodoItem({ todo }: { todo: Todo }) {
+  const fetcher = useFetcher()
+  
+  // Optimistically show completed state
+  const isCompleted = fetcher.formData
+    ? fetcher.formData.get('completed') === 'true'
+    : todo.completed
+  
+  return (
+    <fetcher.Form method="post">
+      <input type="hidden" name="id" value={todo.id} />
+      <input
+        type="hidden"
+        name="completed"
+        value={(!isCompleted).toString()}
+      />
+      <button type="submit">
+        {isCompleted ? '✓' : '○'} {todo.title}
+      </button>
+    </fetcher.Form>
+  )
+}
+```
+
+---
+
+## Error Handling
+
+### Error Boundary
+
+```tsx
+// app/routes/users.$id.tsx
+import { isRouteErrorResponse, useRouteError } from '@remix-run/react'
+
+export function ErrorBoundary() {
+  const error = useRouteError()
+  
+  if (isRouteErrorResponse(error)) {
+    return (
+      <div>
+        <h1>{error.status} {error.statusText}</h1>
+        <p>{error.data}</p>
+      </div>
+    )
+  }
+  
+  return (
+    <div>
+      <h1>Error</h1>
+      <p>{error instanceof Error ? error.message : 'Unknown error'}</p>
+    </div>
+  )
+}
+```
+
+---
+
+## Sessions & Auth
+
+```typescript
+// app/lib/session.server.ts
+import { createCookieSessionStorage, redirect } from '@remix-run/node'
+
+const sessionStorage = createCookieSessionStorage({
+  cookie: {
+    name: '__session',
+    httpOnly: true,
+    maxAge: 60 * 60 * 24 * 7, // 1 week
+    path: '/',
+    sameSite: 'lax',
+    secrets: [process.env.SESSION_SECRET!],
+    secure: process.env.NODE_ENV === 'production',
+  },
+})
+
+export async function getUser(request: Request) {
+  const session = await sessionStorage.getSession(
+    request.headers.get('Cookie')
+  )
+  const userId = session.get('userId')
+  if (!userId) return null
+  return db.user.findUnique({ where: { id: userId } })
+}
+
+export async function createUserSession(userId: string, redirectTo: string) {
+  const session = await sessionStorage.getSession()
+  session.set('userId', userId)
+  return redirect(redirectTo, {
+    headers: {
+      'Set-Cookie': await sessionStorage.commitSession(session),
+    },
+  })
+}
+
+export async function logout(request: Request) {
+  const session = await sessionStorage.getSession(
+    request.headers.get('Cookie')
+  )
+  return redirect('/login', {
+    headers: {
+      'Set-Cookie': await sessionStorage.destroySession(session),
+    },
+  })
+}
+```
+
+---
+
+## Resource Routes
+
+```tsx
+// app/routes/api.users.tsx (No UI, just data)
+import { json } from '@remix-run/node'
+
+export async function loader() {
+  const users = await db.user.findMany()
+  return json(users)
+}
+
+export async function action({ request }: ActionFunctionArgs) {
+  const data = await request.json()
+  const user = await db.user.create({ data })
+  return json(user, { status: 201 })
+}
+```
+
+---
+
+## Commands
+
+```bash
+# Development
+npm run dev
+
+# Build
+npm run build
+npm run start
+
+# Type checking
+npm run typecheck
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Using `useEffect` for fetching | Use `loader` function |
+| Direct API calls in components | Use `useFetcher` for mutations |
+| Not validating form data | Use Zod in actions |
+| Missing error boundaries | Add `ErrorBoundary` export |
+| `useState` for server data | Use `useLoaderData` |
+| Forgetting `.server` suffix | Add for server-only code |

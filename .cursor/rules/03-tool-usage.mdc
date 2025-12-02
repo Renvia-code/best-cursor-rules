@@ -1,0 +1,166 @@
+---
+description: Efficient tool usage patterns for navigating and editing this repository
+globs: []
+alwaysApply: true
+---
+
+# Tool Usage for This Repository
+
+## Tool Selection Strategy
+
+### codebase_search (Semantic Search)
+
+**When to use**:
+- Finding rules by topic or concept
+- Understanding how similar rules are structured
+- Discovering patterns across multiple rules
+
+**Examples**:
+```
+✅ "How do other rules handle React patterns?"
+✅ "What's the structure for backend rules?"
+✅ "Find rules related to testing"
+```
+
+**Don't use for**:
+```
+❌ Finding specific file names (use glob_file_search)
+❌ Exact text matches (use grep)
+❌ Known file paths (use read_file)
+```
+
+---
+
+### grep (Exact Text Search)
+
+**When to use**:
+- Finding specific patterns in rules
+- Locating frontmatter fields
+- Finding all rules with certain globs
+
+**Examples**:
+```bash
+✅ grep("alwaysApply: true")      # Find always-on rules
+✅ grep("globs:.*\\.tsx")         # Find TypeScript rules
+✅ grep("## Common Mistakes")     # Find rules with this section
+```
+
+---
+
+### glob_file_search (Find Files)
+
+**When to use**:
+- Listing all rules in a category
+- Finding rules by name pattern
+- Getting file counts
+
+**Examples**:
+```
+✅ glob_file_search("rules/frameworks/*.mdc")
+✅ glob_file_search("**/*react*.mdc")
+✅ glob_file_search("rules/**/*.mdc")
+```
+
+---
+
+### read_file (Direct Access)
+
+**When to use**:
+- Reading a specific rule file
+- Checking rule format/structure
+- Reviewing before editing
+
+**Examples**:
+```
+✅ read_file("rules/frameworks/nextjs-15.mdc")
+✅ read_file(".cursor/rules/01-rule-format.mdc")
+```
+
+---
+
+## Parallel Operations
+
+### ✅ DO: Read multiple rules at once
+
+```javascript
+// When comparing or reviewing multiple rules
+read_file('rules/frameworks/nextjs-15.mdc')
+read_file('rules/frameworks/react-19.mdc')
+read_file('rules/backends/supabase.mdc')
+// All execute in parallel
+```
+
+### ❌ DON'T: Read sequentially when independent
+
+```javascript
+// Slow - waits between each
+read_file('rules/frameworks/nextjs-15.mdc')
+// wait...
+read_file('rules/frameworks/react-19.mdc')
+// wait...
+```
+
+---
+
+## Common Tasks
+
+### Adding a new rule
+
+```
+1. glob_file_search("rules/{category}/*.mdc")  # See existing
+2. read_file(".cursor/rules/01-rule-format.mdc")  # Check format
+3. read_file("rules/{category}/similar-rule.mdc")  # Reference
+4. write("rules/{category}/new-rule.mdc", content)
+```
+
+### Updating an existing rule
+
+```
+1. read_file("rules/{category}/rule-name.mdc")  # Current content
+2. search_replace or write to update
+3. Verify frontmatter is still valid
+```
+
+### Finding all rules in a category
+
+```
+glob_file_search("rules/frameworks/*.mdc")
+```
+
+### Checking rule quality
+
+```
+1. read_file("rules/{category}/rule-name.mdc")
+2. Check: frontmatter valid?
+3. Check: under 500 lines?
+4. Check: has code examples?
+5. Check: current for 2025?
+```
+
+---
+
+## File Operations
+
+### Creating Files
+- Use `write` for new rules
+- Always include proper frontmatter
+- Place in correct category directory
+
+### Editing Files
+- Use `read_file` first to see current state
+- Use `search_replace` for precise changes
+- Verify frontmatter remains valid after edits
+
+### Moving/Renaming
+- Delete old file, create new one
+- Update any references in README
+
+---
+
+## Efficiency Tips
+
+1. **Batch reads** - Read multiple related files in parallel
+2. **Search first** - Use grep/glob before reading everything
+3. **Check format** - Reference `01-rule-format.mdc` when creating
+4. **Verify category** - Make sure rule is in the right directory
+5. **Test locally** - Copy rule to a test project to verify it works

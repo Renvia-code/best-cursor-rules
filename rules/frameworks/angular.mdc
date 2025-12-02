@@ -1,0 +1,460 @@
+---
+description: Angular best practices with standalone components, signals, and modern patterns
+globs: ["**/*.ts", "**/*.html", "src/**/*"]
+alwaysApply: false
+---
+
+# Angular Best Practices
+
+## Overview
+
+| Aspect | Recommendation |
+|--------|----------------|
+| Version | Angular 17+ |
+| Components | Standalone (default) |
+| State | Signals |
+| Routing | Standalone routes |
+| Forms | Reactive Forms |
+
+---
+
+## Project Structure
+
+```
+src/
+├── app/
+│   ├── core/                  # Singleton services, guards
+│   │   ├── services/
+│   │   ├── guards/
+│   │   └── interceptors/
+│   ├── features/              # Feature modules
+│   │   ├── auth/
+│   │   │   ├── components/
+│   │   │   ├── services/
+│   │   │   └── auth.routes.ts
+│   │   └── dashboard/
+│   ├── shared/                # Reusable components
+│   │   ├── components/
+│   │   ├── directives/
+│   │   └── pipes/
+│   ├── app.component.ts
+│   ├── app.config.ts
+│   └── app.routes.ts
+├── environments/
+└── main.ts
+```
+
+---
+
+## Standalone Components
+
+### Basic Component
+
+```typescript
+// app/features/users/components/user-card.component.ts
+import { Component, input, output } from '@angular/core'
+import { CommonModule } from '@angular/common'
+
+@Component({
+  selector: 'app-user-card',
+  standalone: true,
+  imports: [CommonModule],
+  template: `
+    <div class="card">
+      <img [src]="user().avatar" [alt]="user().name">
+      <h3>{{ user().name }}</h3>
+      <p>{{ user().email }}</p>
+      <button (click)="select.emit(user())">Select</button>
+    </div>
+  `,
+  styles: [`
+    .card {
+      padding: 1rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+  `]
+})
+export class UserCardComponent {
+  user = input.required<User>()
+  select = output<User>()
+}
+```
+
+### Component with Signals
+
+```typescript
+// app/features/counter/counter.component.ts
+import { Component, signal, computed } from '@angular/core'
+
+@Component({
+  selector: 'app-counter',
+  standalone: true,
+  template: `
+    <div>
+      <p>Count: {{ count() }}</p>
+      <p>Double: {{ double() }}</p>
+      <button (click)="increment()">+</button>
+      <button (click)="decrement()">-</button>
+    </div>
+  `
+})
+export class CounterComponent {
+  count = signal(0)
+  double = computed(() => this.count() * 2)
+
+  increment() {
+    this.count.update(c => c + 1)
+  }
+
+  decrement() {
+    this.count.update(c => c - 1)
+  }
+}
+```
+
+---
+
+## Services
+
+### Basic Service
+
+```typescript
+// app/core/services/user.service.ts
+import { Injectable, inject } from '@angular/core'
+import { HttpClient } from '@angular/common/http'
+import { Observable } from 'rxjs'
+
+@Injectable({ providedIn: 'root' })
+export class UserService {
+  private http = inject(HttpClient)
+  private apiUrl = '/api/users'
+
+  getUsers(): Observable<User[]> {
+    return this.http.get<User[]>(this.apiUrl)
+  }
+
+  getUser(id: string): Observable<User> {
+    return this.http.get<User>(`${this.apiUrl}/${id}`)
+  }
+
+  createUser(user: CreateUserDto): Observable<User> {
+    return this.http.post<User>(this.apiUrl, user)
+  }
+
+  updateUser(id: string, user: Partial<User>): Observable<User> {
+    return this.http.patch<User>(`${this.apiUrl}/${id}`, user)
+  }
+
+  deleteUser(id: string): Observable<void> {
+    return this.http.delete<void>(`${this.apiUrl}/${id}`)
+  }
+}
+```
+
+### Signal-based State Service
+
+```typescript
+// app/core/services/auth.service.ts
+import { Injectable, signal, computed } from '@angular/core'
+import { Router } from '@angular/router'
+
+@Injectable({ providedIn: 'root' })
+export class AuthService {
+  private userSignal = signal<User | null>(null)
+  
+  user = this.userSignal.asReadonly()
+  isLoggedIn = computed(() => !!this.userSignal())
+
+  constructor(private router: Router) {
+    this.loadUser()
+  }
+
+  private loadUser() {
+    const stored = localStorage.getItem('user')
+    if (stored) {
+      this.userSignal.set(JSON.parse(stored))
+    }
+  }
+
+  login(email: string, password: string): Observable<User> {
+    return this.http.post<User>('/api/auth/login', { email, password }).pipe(
+      tap(user => {
+        this.userSignal.set(user)
+        localStorage.setItem('user', JSON.stringify(user))
+      })
+    )
+  }
+
+  logout() {
+    this.userSignal.set(null)
+    localStorage.removeItem('user')
+    this.router.navigate(['/login'])
+  }
+}
+```
+
+---
+
+## Routing
+
+### App Routes
+
+```typescript
+// app/app.routes.ts
+import { Routes } from '@angular/router'
+import { authGuard } from './core/guards/auth.guard'
+
+export const routes: Routes = [
+  {
+    path: '',
+    loadComponent: () => import('./features/home/home.component')
+      .then(m => m.HomeComponent),
+  },
+  {
+    path: 'login',
+    loadComponent: () => import('./features/auth/login.component')
+      .then(m => m.LoginComponent),
+  },
+  {
+    path: 'dashboard',
+    canActivate: [authGuard],
+    loadChildren: () => import('./features/dashboard/dashboard.routes')
+      .then(m => m.DASHBOARD_ROUTES),
+  },
+  {
+    path: '**',
+    redirectTo: '',
+  },
+]
+```
+
+### Feature Routes
+
+```typescript
+// app/features/dashboard/dashboard.routes.ts
+import { Routes } from '@angular/router'
+
+export const DASHBOARD_ROUTES: Routes = [
+  {
+    path: '',
+    loadComponent: () => import('./dashboard.component')
+      .then(m => m.DashboardComponent),
+    children: [
+      {
+        path: 'users',
+        loadComponent: () => import('./users/users.component')
+          .then(m => m.UsersComponent),
+      },
+      {
+        path: 'settings',
+        loadComponent: () => import('./settings/settings.component')
+          .then(m => m.SettingsComponent),
+      },
+    ],
+  },
+]
+```
+
+### Route Guard
+
+```typescript
+// app/core/guards/auth.guard.ts
+import { inject } from '@angular/core'
+import { Router, type CanActivateFn } from '@angular/router'
+import { AuthService } from '../services/auth.service'
+
+export const authGuard: CanActivateFn = () => {
+  const authService = inject(AuthService)
+  const router = inject(Router)
+
+  if (authService.isLoggedIn()) {
+    return true
+  }
+
+  return router.createUrlTree(['/login'])
+}
+```
+
+---
+
+## Reactive Forms
+
+```typescript
+// app/features/auth/login.component.ts
+import { Component, inject } from '@angular/core'
+import { ReactiveFormsModule, FormBuilder, Validators } from '@angular/forms'
+import { Router } from '@angular/router'
+import { AuthService } from '@app/core/services/auth.service'
+
+@Component({
+  selector: 'app-login',
+  standalone: true,
+  imports: [ReactiveFormsModule],
+  template: `
+    <form [formGroup]="form" (ngSubmit)="onSubmit()">
+      <div>
+        <label for="email">Email</label>
+        <input id="email" type="email" formControlName="email">
+        @if (form.controls.email.errors?.['required']) {
+          <span class="error">Email is required</span>
+        }
+        @if (form.controls.email.errors?.['email']) {
+          <span class="error">Invalid email</span>
+        }
+      </div>
+
+      <div>
+        <label for="password">Password</label>
+        <input id="password" type="password" formControlName="password">
+        @if (form.controls.password.errors?.['required']) {
+          <span class="error">Password is required</span>
+        }
+        @if (form.controls.password.errors?.['minlength']) {
+          <span class="error">Password must be 8+ characters</span>
+        }
+      </div>
+
+      <button type="submit" [disabled]="form.invalid || isLoading">
+        {{ isLoading ? 'Loading...' : 'Login' }}
+      </button>
+    </form>
+  `
+})
+export class LoginComponent {
+  private fb = inject(FormBuilder)
+  private authService = inject(AuthService)
+  private router = inject(Router)
+
+  isLoading = false
+
+  form = this.fb.nonNullable.group({
+    email: ['', [Validators.required, Validators.email]],
+    password: ['', [Validators.required, Validators.minLength(8)]],
+  })
+
+  onSubmit() {
+    if (this.form.invalid) return
+
+    this.isLoading = true
+    const { email, password } = this.form.getRawValue()
+
+    this.authService.login(email, password).subscribe({
+      next: () => this.router.navigate(['/dashboard']),
+      error: () => this.isLoading = false,
+    })
+  }
+}
+```
+
+---
+
+## HTTP Interceptors
+
+```typescript
+// app/core/interceptors/auth.interceptor.ts
+import { HttpInterceptorFn } from '@angular/common/http'
+import { inject } from '@angular/core'
+import { AuthService } from '../services/auth.service'
+
+export const authInterceptor: HttpInterceptorFn = (req, next) => {
+  const authService = inject(AuthService)
+  const user = authService.user()
+
+  if (user?.token) {
+    req = req.clone({
+      setHeaders: {
+        Authorization: `Bearer ${user.token}`,
+      },
+    })
+  }
+
+  return next(req)
+}
+```
+
+```typescript
+// app/app.config.ts
+import { provideHttpClient, withInterceptors } from '@angular/common/http'
+import { authInterceptor } from './core/interceptors/auth.interceptor'
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideRouter(routes),
+    provideHttpClient(withInterceptors([authInterceptor])),
+  ],
+}
+```
+
+---
+
+## Control Flow (Angular 17+)
+
+```typescript
+@Component({
+  template: `
+    <!-- If/Else -->
+    @if (isLoggedIn()) {
+      <app-dashboard />
+    } @else {
+      <app-login />
+    }
+
+    <!-- For Loop -->
+    @for (user of users(); track user.id) {
+      <app-user-card [user]="user" />
+    } @empty {
+      <p>No users found</p>
+    }
+
+    <!-- Switch -->
+    @switch (status()) {
+      @case ('loading') { <app-spinner /> }
+      @case ('error') { <app-error /> }
+      @default { <app-content /> }
+    }
+
+    <!-- Defer -->
+    @defer (on viewport) {
+      <app-heavy-component />
+    } @placeholder {
+      <div>Loading...</div>
+    }
+  `
+})
+```
+
+---
+
+## Commands
+
+```bash
+# Development
+ng serve                    # Start dev server
+ng serve --open             # Open browser
+
+# Build
+ng build                    # Production build
+ng build --configuration=development
+
+# Generate
+ng generate component features/users/user-card --standalone
+ng generate service core/services/user
+
+# Test
+ng test
+ng e2e
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Not using standalone | Add `standalone: true` |
+| NgModules for new code | Use standalone components |
+| `*ngIf` / `*ngFor` | Use `@if` / `@for` syntax |
+| Manual subscriptions | Use `async` pipe or `toSignal` |
+| Services in components | Use `providedIn: 'root'` |
+| Direct DOM access | Use signals and templates |

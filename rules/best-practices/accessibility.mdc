@@ -1,0 +1,406 @@
+---
+description: Web accessibility best practices for WCAG compliance and inclusive design
+globs: ["**/*.tsx", "**/*.jsx", "**/*.vue", "**/*.svelte", "**/*.html"]
+alwaysApply: false
+---
+
+# Accessibility Best Practices
+
+## Overview
+
+| Standard | Target |
+|----------|--------|
+| WCAG | 2.1 AA |
+| Focus | Keyboard navigation |
+| Screen readers | Full support |
+| Color contrast | 4.5:1 minimum |
+
+---
+
+## Semantic HTML
+
+### Use Correct Elements
+
+```tsx
+// ❌ Bad - Div soup
+<div onClick={handleClick}>Click me</div>
+<div class="heading">Title</div>
+<div class="list">
+  <div>Item 1</div>
+  <div>Item 2</div>
+</div>
+
+// ✅ Good - Semantic elements
+<button onClick={handleClick}>Click me</button>
+<h1>Title</h1>
+<ul>
+  <li>Item 1</li>
+  <li>Item 2</li>
+</ul>
+```
+
+### Landmark Regions
+
+```tsx
+// ✅ Use semantic landmarks
+<header>
+  <nav aria-label="Main navigation">
+    {/* Navigation links */}
+  </nav>
+</header>
+
+<main>
+  <article>
+    <h1>Article Title</h1>
+    {/* Content */}
+  </article>
+  
+  <aside aria-label="Related articles">
+    {/* Sidebar */}
+  </aside>
+</main>
+
+<footer>
+  {/* Footer content */}
+</footer>
+```
+
+---
+
+## Images and Media
+
+### Alt Text
+
+```tsx
+// ✅ Descriptive alt text
+<img 
+  src="/chart.png" 
+  alt="Bar chart showing sales increased 25% from Q1 to Q2 2025"
+/>
+
+// ✅ Decorative images - empty alt
+<img src="/decorative-line.png" alt="" />
+
+// ✅ Complex images - link to description
+<figure>
+  <img 
+    src="/infographic.png" 
+    alt="Company growth infographic"
+    aria-describedby="infographic-description"
+  />
+  <figcaption id="infographic-description">
+    Detailed description of the infographic...
+  </figcaption>
+</figure>
+```
+
+### Video Accessibility
+
+```tsx
+// ✅ Include captions and transcripts
+<video controls>
+  <source src="/video.mp4" type="video/mp4" />
+  <track 
+    kind="captions" 
+    src="/captions.vtt" 
+    srcLang="en" 
+    label="English captions"
+    default
+  />
+  <track 
+    kind="descriptions" 
+    src="/descriptions.vtt" 
+    srcLang="en" 
+    label="Audio descriptions"
+  />
+</video>
+```
+
+---
+
+## Forms
+
+### Labels and Inputs
+
+```tsx
+// ✅ Always associate labels with inputs
+<div>
+  <label htmlFor="email">Email address</label>
+  <input 
+    id="email"
+    type="email"
+    aria-describedby="email-hint email-error"
+    aria-invalid={hasError}
+  />
+  <p id="email-hint">We'll never share your email</p>
+  {hasError && (
+    <p id="email-error" role="alert">Please enter a valid email</p>
+  )}
+</div>
+
+// ✅ Required fields
+<label htmlFor="name">
+  Name <span aria-hidden="true">*</span>
+  <span className="sr-only">(required)</span>
+</label>
+<input id="name" required aria-required="true" />
+```
+
+### Error Handling
+
+```tsx
+// ✅ Announce errors to screen readers
+function Form() {
+  const [errors, setErrors] = useState<string[]>([])
+
+  return (
+    <form>
+      {/* Error summary at top */}
+      {errors.length > 0 && (
+        <div role="alert" aria-live="assertive">
+          <h2>Please fix the following errors:</h2>
+          <ul>
+            {errors.map((error, i) => (
+              <li key={i}>{error}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      
+      {/* Form fields */}
+    </form>
+  )
+}
+```
+
+---
+
+## Keyboard Navigation
+
+### Focus Management
+
+```tsx
+// ✅ Visible focus indicators
+// In CSS:
+*:focus-visible {
+  outline: 2px solid #0066cc;
+  outline-offset: 2px;
+}
+
+// ❌ Never remove focus outline without replacement
+*:focus {
+  outline: none; // Bad!
+}
+```
+
+### Modal Focus Trap
+
+```tsx
+import { useEffect, useRef } from 'react'
+
+function Modal({ isOpen, onClose, children }) {
+  const modalRef = useRef<HTMLDivElement>(null)
+  const previousFocus = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    if (isOpen) {
+      // Save current focus
+      previousFocus.current = document.activeElement as HTMLElement
+      // Focus modal
+      modalRef.current?.focus()
+    } else {
+      // Restore focus on close
+      previousFocus.current?.focus()
+    }
+  }, [isOpen])
+
+  // Handle Escape key
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') onClose()
+  }
+
+  return (
+    <div
+      ref={modalRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+    >
+      <h2 id="modal-title">Modal Title</h2>
+      {children}
+      <button onClick={onClose}>Close</button>
+    </div>
+  )
+}
+```
+
+### Skip Links
+
+```tsx
+// ✅ Allow keyboard users to skip navigation
+<body>
+  <a href="#main-content" className="sr-only focus:not-sr-only">
+    Skip to main content
+  </a>
+  
+  <nav>{/* Navigation */}</nav>
+  
+  <main id="main-content" tabIndex={-1}>
+    {/* Main content */}
+  </main>
+</body>
+```
+
+---
+
+## ARIA
+
+### When to Use ARIA
+
+```tsx
+// ✅ Use ARIA only when HTML isn't enough
+
+// Custom tabs (no native element)
+<div role="tablist">
+  <button 
+    role="tab" 
+    aria-selected={activeTab === 0}
+    aria-controls="panel-0"
+  >
+    Tab 1
+  </button>
+</div>
+<div 
+  role="tabpanel" 
+  id="panel-0"
+  aria-labelledby="tab-0"
+>
+  Content
+</div>
+
+// ❌ Don't use ARIA when HTML works
+<div role="button" tabIndex={0}>Click</div>  // Bad
+<button>Click</button>  // Good
+```
+
+### Live Regions
+
+```tsx
+// ✅ Announce dynamic content changes
+<div aria-live="polite" aria-atomic="true">
+  {statusMessage}  {/* Screen reader announces when this changes */}
+</div>
+
+// Types:
+// aria-live="polite" - Announces when user is idle
+// aria-live="assertive" - Announces immediately (use sparingly)
+// aria-atomic="true" - Announces entire region, not just changes
+```
+
+---
+
+## Color and Contrast
+
+### Minimum Contrast Ratios
+
+| Element | Ratio | Example |
+|---------|-------|---------|
+| Normal text | 4.5:1 | #595959 on white |
+| Large text (18px+) | 3:1 | #767676 on white |
+| UI components | 3:1 | Buttons, icons |
+
+### Don't Rely on Color Alone
+
+```tsx
+// ❌ Bad - Only color indicates error
+<input style={{ borderColor: 'red' }} />
+
+// ✅ Good - Multiple indicators
+<input 
+  style={{ borderColor: 'red' }}
+  aria-invalid="true"
+  aria-describedby="error"
+/>
+<p id="error">
+  <span aria-hidden="true">⚠️</span>
+  This field is required
+</p>
+```
+
+---
+
+## Screen Reader Text
+
+```tsx
+// ✅ Visually hidden but accessible
+<style>
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+</style>
+
+// Usage
+<button>
+  <span aria-hidden="true">×</span>
+  <span className="sr-only">Close modal</span>
+</button>
+
+<a href="/cart">
+  <ShoppingCartIcon aria-hidden="true" />
+  <span className="sr-only">Shopping cart, 3 items</span>
+  <span aria-hidden="true">3</span>
+</a>
+```
+
+---
+
+## Testing
+
+### Manual Testing Checklist
+
+- [ ] Navigate entire page with keyboard only
+- [ ] Test with screen reader (VoiceOver, NVDA)
+- [ ] Check focus order is logical
+- [ ] Verify color contrast
+- [ ] Test at 200% zoom
+- [ ] Test with animations disabled
+
+### Automated Tools
+
+```bash
+# axe-core
+npm install @axe-core/react
+
+# In development
+import React from 'react'
+import ReactDOM from 'react-dom'
+
+if (process.env.NODE_ENV !== 'production') {
+  import('@axe-core/react').then((axe) => {
+    axe.default(React, ReactDOM, 1000)
+  })
+}
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Missing alt text | Add descriptive alt or empty for decorative |
+| No focus indicators | Use `:focus-visible` styling |
+| Form inputs without labels | Associate labels with `htmlFor`/`id` |
+| Click handlers on divs | Use `<button>` or `<a>` |
+| Color-only information | Add text/icons alongside color |
+| Auto-playing media | Allow user control, provide captions |

@@ -1,0 +1,433 @@
+---
+description: Jest best practices for unit and integration testing JavaScript/TypeScript
+globs: ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "__tests__/**/*"]
+alwaysApply: false
+---
+
+# Jest Best Practices
+
+## Overview
+
+| Aspect | Recommendation |
+|--------|----------------|
+| Version | Jest 29+ |
+| UI Testing | @testing-library/react |
+| Mocking | jest.mock, jest.fn |
+| Coverage | Built-in (--coverage) |
+
+---
+
+## Configuration
+
+### jest.config.ts
+
+```typescript
+import type { Config } from 'jest'
+
+const config: Config = {
+  preset: 'ts-jest',
+  testEnvironment: 'jsdom', // or 'node' for backend
+  roots: ['<rootDir>/src'],
+  testMatch: ['**/__tests__/**/*.ts?(x)', '**/?(*.)+(spec|test).ts?(x)'],
+  moduleNameMapper: {
+    '^@/(.*)$': '<rootDir>/src/$1',
+    '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
+  },
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
+  collectCoverageFrom: [
+    'src/**/*.{ts,tsx}',
+    '!src/**/*.d.ts',
+    '!src/**/*.stories.tsx',
+  ],
+  coverageThreshold: {
+    global: {
+      branches: 80,
+      functions: 80,
+      lines: 80,
+      statements: 80,
+    },
+  },
+}
+
+export default config
+```
+
+### Setup File
+
+```typescript
+// jest.setup.ts
+import '@testing-library/jest-dom'
+
+// Mock window.matchMedia
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  value: jest.fn().mockImplementation((query) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+  })),
+})
+
+// Reset mocks between tests
+beforeEach(() => {
+  jest.clearAllMocks()
+})
+```
+
+---
+
+## Test Structure
+
+### Basic Test File
+
+```typescript
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals'
+
+describe('MyFunction', () => {
+  beforeEach(() => {
+    // Setup before each test
+  })
+
+  afterEach(() => {
+    // Cleanup after each test
+  })
+
+  it('should return expected result', () => {
+    const result = myFunction('input')
+    expect(result).toBe('expected')
+  })
+
+  it('should throw on invalid input', () => {
+    expect(() => myFunction(null)).toThrow('Invalid input')
+  })
+
+  it.each([
+    ['input1', 'output1'],
+    ['input2', 'output2'],
+    ['input3', 'output3'],
+  ])('should transform %s to %s', (input, expected) => {
+    expect(myFunction(input)).toBe(expected)
+  })
+})
+```
+
+### Component Testing
+
+```typescript
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { Button } from '@/components/Button'
+
+describe('Button', () => {
+  it('renders with correct text', () => {
+    render(<Button>Click me</Button>)
+    expect(screen.getByRole('button', { name: 'Click me' })).toBeInTheDocument()
+  })
+
+  it('calls onClick when clicked', async () => {
+    const handleClick = jest.fn()
+    const user = userEvent.setup()
+
+    render(<Button onClick={handleClick}>Click me</Button>)
+    await user.click(screen.getByRole('button'))
+
+    expect(handleClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('is disabled when disabled prop is true', () => {
+    render(<Button disabled>Click me</Button>)
+    expect(screen.getByRole('button')).toBeDisabled()
+  })
+
+  it('shows loading state', () => {
+    render(<Button loading>Submit</Button>)
+    expect(screen.getByRole('button')).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByText('Loading...')).toBeInTheDocument()
+  })
+})
+```
+
+---
+
+## Mocking
+
+### Mock Functions
+
+```typescript
+// Create mock function
+const mockFn = jest.fn()
+
+// With implementation
+const mockFn = jest.fn((x: number) => x * 2)
+
+// With return value
+const mockFn = jest.fn().mockReturnValue('mocked')
+
+// With async return
+const mockAsync = jest.fn().mockResolvedValue({ data: 'value' })
+
+// With rejection
+const mockReject = jest.fn().mockRejectedValue(new Error('Failed'))
+
+// Check calls
+expect(mockFn).toHaveBeenCalled()
+expect(mockFn).toHaveBeenCalledWith('arg1', 'arg2')
+expect(mockFn).toHaveBeenCalledTimes(2)
+expect(mockFn).toHaveBeenLastCalledWith('lastArg')
+```
+
+### Mock Modules
+
+```typescript
+// Mock entire module
+jest.mock('@/services/api', () => ({
+  fetchUser: jest.fn(),
+  updateUser: jest.fn(),
+}))
+
+import { fetchUser, updateUser } from '@/services/api'
+
+// Type the mock
+const mockFetchUser = fetchUser as jest.MockedFunction<typeof fetchUser>
+
+describe('UserService', () => {
+  beforeEach(() => {
+    mockFetchUser.mockClear()
+  })
+
+  it('fetches user data', async () => {
+    mockFetchUser.mockResolvedValue({ id: 1, name: 'John' })
+
+    const result = await getUserData(1)
+
+    expect(fetchUser).toHaveBeenCalledWith(1)
+    expect(result.name).toBe('John')
+  })
+})
+```
+
+### Partial Mocks
+
+```typescript
+// Mock specific exports, keep others
+jest.mock('@/utils', () => ({
+  ...jest.requireActual('@/utils'),
+  expensiveOperation: jest.fn().mockReturnValue('mocked'),
+}))
+```
+
+### Mock API Calls
+
+```typescript
+// Mock fetch globally
+global.fetch = jest.fn()
+
+beforeEach(() => {
+  (fetch as jest.Mock).mockResolvedValue({
+    ok: true,
+    json: () => Promise.resolve({ data: 'value' }),
+  })
+})
+
+// Or use jest-fetch-mock
+import fetchMock from 'jest-fetch-mock'
+fetchMock.enableMocks()
+
+beforeEach(() => {
+  fetchMock.resetMocks()
+  fetchMock.mockResponseOnce(JSON.stringify({ data: 'value' }))
+})
+```
+
+---
+
+## Async Testing
+
+```typescript
+describe('async operations', () => {
+  // Async/await
+  it('resolves with data', async () => {
+    const result = await fetchData()
+    expect(result).toEqual({ id: 1 })
+  })
+
+  // Promise assertions
+  it('rejects with error', async () => {
+    await expect(failingFunction()).rejects.toThrow('Error message')
+  })
+
+  // Wait for element
+  it('shows data after loading', async () => {
+    render(<DataComponent />)
+
+    expect(screen.getByText('Loading...')).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(screen.getByText('Data loaded')).toBeInTheDocument()
+    })
+  })
+
+  // Timers
+  it('debounces input', async () => {
+    jest.useFakeTimers()
+
+    render(<SearchInput onChange={mockOnChange} />)
+    await userEvent.type(screen.getByRole('textbox'), 'test')
+
+    expect(mockOnChange).not.toHaveBeenCalled()
+
+    jest.advanceTimersByTime(500)
+
+    expect(mockOnChange).toHaveBeenCalledWith('test')
+
+    jest.useRealTimers()
+  })
+})
+```
+
+---
+
+## Testing Hooks
+
+```typescript
+import { renderHook, act } from '@testing-library/react'
+import { useCounter } from '@/hooks/useCounter'
+
+describe('useCounter', () => {
+  it('increments counter', () => {
+    const { result } = renderHook(() => useCounter())
+
+    expect(result.current.count).toBe(0)
+
+    act(() => {
+      result.current.increment()
+    })
+
+    expect(result.current.count).toBe(1)
+  })
+
+  it('accepts initial value', () => {
+    const { result } = renderHook(() => useCounter(10))
+    expect(result.current.count).toBe(10)
+  })
+
+  it('resets counter', () => {
+    const { result } = renderHook(() => useCounter(5))
+
+    act(() => {
+      result.current.increment()
+      result.current.reset()
+    })
+
+    expect(result.current.count).toBe(5)
+  })
+})
+```
+
+---
+
+## Testing with Context
+
+```typescript
+import { render, screen } from '@testing-library/react'
+import { ThemeProvider } from '@/context/theme'
+
+const renderWithProviders = (ui: React.ReactElement) => {
+  return render(
+    <ThemeProvider>
+      {ui}
+    </ThemeProvider>
+  )
+}
+
+// Create custom render
+const customRender = (ui: React.ReactElement, options = {}) =>
+  render(ui, {
+    wrapper: ({ children }) => (
+      <ThemeProvider>
+        <AuthProvider>
+          {children}
+        </AuthProvider>
+      </ThemeProvider>
+    ),
+    ...options,
+  })
+
+describe('ThemedComponent', () => {
+  it('uses theme from context', () => {
+    renderWithProviders(<ThemedButton>Click</ThemedButton>)
+    expect(screen.getByRole('button')).toHaveClass('theme-default')
+  })
+})
+```
+
+---
+
+## Snapshot Testing
+
+```typescript
+import { render } from '@testing-library/react'
+import { Card } from '@/components/Card'
+
+describe('Card', () => {
+  it('matches snapshot', () => {
+    const { container } = render(
+      <Card title="Test" description="Description" />
+    )
+    expect(container).toMatchSnapshot()
+  })
+
+  // Inline snapshot
+  it('renders correctly', () => {
+    const { container } = render(<Card title="Test" />)
+    expect(container.innerHTML).toMatchInlineSnapshot(
+      `"<div class="card"><h2>Test</h2></div>"`
+    )
+  })
+})
+```
+
+---
+
+## Commands
+
+```bash
+# Run tests
+npm test
+
+# Watch mode
+npm test -- --watch
+
+# Coverage
+npm test -- --coverage
+
+# Specific file
+npm test -- Button.test.tsx
+
+# Update snapshots
+npm test -- -u
+
+# Run tests matching pattern
+npm test -- -t "Button"
+
+# Verbose output
+npm test -- --verbose
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Testing implementation | Test behavior, not internals |
+| Not using userEvent | Prefer `userEvent` over `fireEvent` |
+| Forgetting cleanup | Jest handles cleanup automatically |
+| Using hardcoded timeouts | Use `waitFor` and fake timers |
+| Mocking too much | Mock at boundaries only |
+| Not clearing mocks | Use `beforeEach` with `clearAllMocks` |

@@ -1,0 +1,459 @@
+---
+description: Prisma ORM best practices for type-safe database access
+globs: ["**/*.ts", "**/*.tsx", "prisma/**/*"]
+alwaysApply: false
+---
+
+# Prisma Best Practices
+
+## Overview
+
+| Aspect | Recommendation |
+|--------|----------------|
+| Version | Prisma 5.x |
+| Database | PostgreSQL (recommended) |
+| Type Safety | Full TypeScript integration |
+| Migrations | Prisma Migrate |
+
+---
+
+## Schema Design
+
+### Basic Schema
+
+```prisma
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String    @map("password_hash")
+  role          Role      @default(USER)
+  posts         Post[]
+  profile       Profile?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@map("users")
+  @@index([email])
+}
+
+model Post {
+  id          String    @id @default(cuid())
+  title       String
+  content     String?
+  published   Boolean   @default(false)
+  author      User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  authorId    String    @map("author_id")
+  categories  Category[]
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@map("posts")
+  @@index([authorId])
+}
+
+model Profile {
+  id        String  @id @default(cuid())
+  bio       String?
+  avatarUrl String? @map("avatar_url")
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String  @unique @map("user_id")
+
+  @@map("profiles")
+}
+
+model Category {
+  id    String @id @default(cuid())
+  name  String @unique
+  posts Post[]
+
+  @@map("categories")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+```
+
+---
+
+## Client Setup
+
+### Singleton Pattern
+
+```typescript
+// lib/prisma.ts
+import { PrismaClient } from '@prisma/client'
+
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined
+}
+
+export const prisma =
+  globalForPrisma.prisma ??
+  new PrismaClient({
+    log: process.env.NODE_ENV === 'development' 
+      ? ['query', 'error', 'warn'] 
+      : ['error'],
+  })
+
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
+```
+
+### Extended Client
+
+```typescript
+// lib/prisma.ts
+import { PrismaClient } from '@prisma/client'
+
+const prismaClientSingleton = () => {
+  return new PrismaClient().$extends({
+    query: {
+      $allModels: {
+        async findMany({ model, operation, args, query }) {
+          args.take = args.take ?? 100 // Default limit
+          return query(args)
+        },
+      },
+    },
+    result: {
+      user: {
+        fullName: {
+          needs: { firstName: true, lastName: true },
+          compute(user) {
+            return `${user.firstName} ${user.lastName}`
+          },
+        },
+      },
+    },
+  })
+}
+
+export const prisma = globalForPrisma.prisma ?? prismaClientSingleton()
+```
+
+---
+
+## Query Patterns
+
+### Basic CRUD
+
+```typescript
+// Create
+const user = await prisma.user.create({
+  data: {
+    email: 'user@example.com',
+    name: 'John Doe',
+    passwordHash: hashedPassword,
+  },
+})
+
+// Create with relations
+const userWithProfile = await prisma.user.create({
+  data: {
+    email: 'user@example.com',
+    name: 'John',
+    profile: {
+      create: {
+        bio: 'Hello world',
+      },
+    },
+  },
+  include: { profile: true },
+})
+
+// Read
+const user = await prisma.user.findUnique({
+  where: { id },
+})
+
+const users = await prisma.user.findMany({
+  where: { role: 'USER' },
+  orderBy: { createdAt: 'desc' },
+  take: 10,
+  skip: 0,
+})
+
+// Update
+const updated = await prisma.user.update({
+  where: { id },
+  data: { name: 'New Name' },
+})
+
+// Delete
+await prisma.user.delete({
+  where: { id },
+})
+```
+
+### Relations and Includes
+
+```typescript
+// Select specific fields
+const user = await prisma.user.findUnique({
+  where: { id },
+  select: {
+    id: true,
+    email: true,
+    name: true,
+    profile: {
+      select: { bio: true },
+    },
+  },
+})
+
+// Include relations
+const posts = await prisma.post.findMany({
+  where: { published: true },
+  include: {
+    author: {
+      select: { name: true, email: true },
+    },
+    categories: true,
+  },
+})
+
+// Nested filters
+const usersWithPosts = await prisma.user.findMany({
+  where: {
+    posts: {
+      some: { published: true },
+    },
+  },
+  include: {
+    posts: {
+      where: { published: true },
+      take: 5,
+    },
+  },
+})
+```
+
+### Transactions
+
+```typescript
+// Sequential operations
+const [user, post] = await prisma.$transaction([
+  prisma.user.create({ data: userData }),
+  prisma.post.create({ data: postData }),
+])
+
+// Interactive transaction
+const result = await prisma.$transaction(async (tx) => {
+  const user = await tx.user.findUnique({ where: { id } })
+  
+  if (!user) {
+    throw new Error('User not found')
+  }
+
+  const updated = await tx.user.update({
+    where: { id },
+    data: { credits: user.credits - 10 },
+  })
+
+  await tx.transaction.create({
+    data: { userId: id, amount: -10 },
+  })
+
+  return updated
+})
+```
+
+### Aggregations
+
+```typescript
+// Count
+const count = await prisma.user.count({
+  where: { role: 'USER' },
+})
+
+// Group by
+const stats = await prisma.post.groupBy({
+  by: ['authorId'],
+  _count: { id: true },
+  _avg: { views: true },
+  having: {
+    id: { _count: { gt: 5 } },
+  },
+})
+
+// Aggregate
+const result = await prisma.order.aggregate({
+  _sum: { amount: true },
+  _avg: { amount: true },
+  _count: true,
+  where: { status: 'COMPLETED' },
+})
+```
+
+---
+
+## Type Safety
+
+### Generated Types
+
+```typescript
+import { User, Post, Prisma } from '@prisma/client'
+
+// Use generated types
+type UserWithPosts = Prisma.UserGetPayload<{
+  include: { posts: true }
+}>
+
+// Input types
+type UserCreateInput = Prisma.UserCreateInput
+
+// For select/include results
+const userSelect = {
+  id: true,
+  email: true,
+  profile: { select: { bio: true } },
+} satisfies Prisma.UserSelect
+
+type SelectedUser = Prisma.UserGetPayload<{ select: typeof userSelect }>
+```
+
+### Repository Pattern
+
+```typescript
+// repositories/user.repository.ts
+import { prisma } from '@/lib/prisma'
+import { Prisma } from '@prisma/client'
+
+const userWithProfile = Prisma.validator<Prisma.UserDefaultArgs>()({
+  include: { profile: true },
+})
+
+type UserWithProfile = Prisma.UserGetPayload<typeof userWithProfile>
+
+export const userRepository = {
+  async findById(id: string): Promise<UserWithProfile | null> {
+    return prisma.user.findUnique({
+      where: { id },
+      ...userWithProfile,
+    })
+  },
+
+  async findByEmail(email: string) {
+    return prisma.user.findUnique({
+      where: { email },
+      select: {
+        id: true,
+        email: true,
+        passwordHash: true,
+      },
+    })
+  },
+
+  async create(data: Prisma.UserCreateInput) {
+    return prisma.user.create({
+      data,
+      ...userWithProfile,
+    })
+  },
+}
+```
+
+---
+
+## Migrations
+
+```bash
+# Create migration
+npx prisma migrate dev --name add_user_table
+
+# Apply migrations (production)
+npx prisma migrate deploy
+
+# Reset database (development)
+npx prisma migrate reset
+
+# Generate client
+npx prisma generate
+
+# Open Prisma Studio
+npx prisma studio
+
+# Format schema
+npx prisma format
+```
+
+---
+
+## Seeding
+
+```typescript
+// prisma/seed.ts
+import { PrismaClient } from '@prisma/client'
+
+const prisma = new PrismaClient()
+
+async function main() {
+  // Clean existing data
+  await prisma.post.deleteMany()
+  await prisma.user.deleteMany()
+
+  // Create users
+  const admin = await prisma.user.create({
+    data: {
+      email: 'admin@example.com',
+      name: 'Admin',
+      role: 'ADMIN',
+      passwordHash: await hash('password'),
+      profile: {
+        create: { bio: 'Site administrator' },
+      },
+    },
+  })
+
+  // Create posts
+  await prisma.post.createMany({
+    data: [
+      { title: 'First Post', authorId: admin.id, published: true },
+      { title: 'Draft Post', authorId: admin.id },
+    ],
+  })
+
+  console.log('Seeding complete')
+}
+
+main()
+  .catch((e) => {
+    console.error(e)
+    process.exit(1)
+  })
+  .finally(() => prisma.$disconnect())
+```
+
+```json
+// package.json
+{
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  }
+}
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| No client singleton | Use global pattern for dev |
+| N+1 queries | Use `include` or `select` |
+| No indexes | Add `@@index` for foreign keys |
+| Ignoring `updatedAt` | Add `@updatedAt` to models |
+| Raw SQL everywhere | Use typed queries when possible |
+| No soft deletes | Add `deletedAt` if needed |

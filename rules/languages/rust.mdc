@@ -1,0 +1,425 @@
+---
+description: Rust best practices with ownership, error handling, and idiomatic patterns
+globs: ["**/*.rs", "Cargo.toml"]
+alwaysApply: false
+---
+
+# Rust Best Practices
+
+## Overview
+
+| Aspect | Recommendation |
+|--------|----------------|
+| Edition | Rust 2021 |
+| Error Handling | `Result` with `?` operator |
+| Async Runtime | Tokio |
+| Serialization | serde |
+| Web Framework | Axum or Actix-web |
+
+---
+
+## Project Structure
+
+```
+src/
+├── main.rs              # Binary entry point
+├── lib.rs               # Library root
+├── config.rs            # Configuration
+├── error.rs             # Error types
+├── models/
+│   ├── mod.rs
+│   └── user.rs
+├── handlers/            # Route handlers
+│   ├── mod.rs
+│   └── users.rs
+├── services/            # Business logic
+│   ├── mod.rs
+│   └── user_service.rs
+└── db/
+    ├── mod.rs
+    └── repository.rs
+tests/
+├── integration_test.rs
+Cargo.toml
+```
+
+---
+
+## Error Handling
+
+### Custom Error Type
+
+```rust
+// src/error.rs
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde_json::json;
+
+#[derive(Debug)]
+pub enum AppError {
+    NotFound(String),
+    BadRequest(String),
+    Internal(String),
+    Unauthorized,
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let (status, message) = match self {
+            Self::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
+            Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+            Self::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            Self::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".into()),
+        };
+
+        (status, Json(json!({ "error": message }))).into_response()
+    }
+}
+
+// Convert from other error types
+impl From<sqlx::Error> for AppError {
+    fn from(err: sqlx::Error) -> Self {
+        match err {
+            sqlx::Error::RowNotFound => Self::NotFound("Resource not found".into()),
+            _ => Self::Internal(err.to_string()),
+        }
+    }
+}
+
+pub type Result<T> = std::result::Result<T, AppError>;
+```
+
+### Using Result
+
+```rust
+// ✅ Good - Use ? operator
+fn parse_config(path: &str) -> Result<Config, ConfigError> {
+    let content = std::fs::read_to_string(path)?;
+    let config: Config = serde_json::from_str(&content)?;
+    Ok(config)
+}
+
+// ✅ Good - Early return pattern
+fn process_user(id: u32) -> Result<User, AppError> {
+    let user = find_user(id).ok_or(AppError::NotFound("User not found".into()))?;
+    
+    if !user.is_active {
+        return Err(AppError::BadRequest("User is inactive".into()));
+    }
+    
+    Ok(user)
+}
+
+// ❌ Bad - Unwrap in production code
+fn bad_example() {
+    let value = risky_operation().unwrap(); // Don't do this
+}
+```
+
+---
+
+## Structs and Types
+
+### Data Types with serde
+
+```rust
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct User {
+    pub id: i64,
+    pub email: String,
+    pub name: String,
+    #[serde(skip_serializing)]
+    pub password_hash: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateUserRequest {
+    pub email: String,
+    pub name: String,
+    pub password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserResponse {
+    pub id: i64,
+    pub email: String,
+    pub name: String,
+}
+
+impl From<User> for UserResponse {
+    fn from(user: User) -> Self {
+        Self {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+        }
+    }
+}
+```
+
+### Builder Pattern
+
+```rust
+#[derive(Default)]
+pub struct QueryBuilder {
+    filters: Vec<String>,
+    limit: Option<i32>,
+    offset: Option<i32>,
+}
+
+impl QueryBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn filter(mut self, condition: impl Into<String>) -> Self {
+        self.filters.push(condition.into());
+        self
+    }
+
+    pub fn limit(mut self, limit: i32) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    pub fn offset(mut self, offset: i32) -> Self {
+        self.offset = Some(offset);
+        self
+    }
+
+    pub fn build(self) -> Query {
+        Query {
+            filters: self.filters,
+            limit: self.limit.unwrap_or(100),
+            offset: self.offset.unwrap_or(0),
+        }
+    }
+}
+
+// Usage
+let query = QueryBuilder::new()
+    .filter("status = 'active'")
+    .limit(10)
+    .build();
+```
+
+---
+
+## Ownership and Borrowing
+
+```rust
+// ✅ Good - Take ownership when needed
+fn consume_string(s: String) {
+    println!("{}", s);
+    // s is dropped here
+}
+
+// ✅ Good - Borrow when you don't need ownership
+fn print_string(s: &str) {
+    println!("{}", s);
+}
+
+// ✅ Good - Mutable borrow when modifying
+fn append_suffix(s: &mut String) {
+    s.push_str("_suffix");
+}
+
+// ✅ Good - Use Clone explicitly when needed
+fn duplicate_and_process(data: &Data) -> ProcessedData {
+    let owned = data.clone(); // Explicit about the cost
+    process(owned)
+}
+```
+
+---
+
+## Async Patterns
+
+### Axum Handler
+
+```rust
+use axum::{
+    extract::{Path, State, Json},
+    routing::{get, post},
+    Router,
+};
+use std::sync::Arc;
+
+pub struct AppState {
+    pub db: sqlx::PgPool,
+}
+
+pub fn router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .route("/users", get(list_users).post(create_user))
+        .route("/users/:id", get(get_user).delete(delete_user))
+        .with_state(state)
+}
+
+async fn list_users(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<UserResponse>>, AppError> {
+    let users = sqlx::query_as!(User, "SELECT * FROM users")
+        .fetch_all(&state.db)
+        .await?;
+
+    Ok(Json(users.into_iter().map(Into::into).collect()))
+}
+
+async fn get_user(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<UserResponse>, AppError> {
+    let user = sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(AppError::NotFound("User not found".into()))?;
+
+    Ok(Json(user.into()))
+}
+
+async fn create_user(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CreateUserRequest>,
+) -> Result<Json<UserResponse>, AppError> {
+    let password_hash = hash_password(&payload.password)?;
+    
+    let user = sqlx::query_as!(
+        User,
+        r#"
+        INSERT INTO users (email, name, password_hash)
+        VALUES ($1, $2, $3)
+        RETURNING *
+        "#,
+        payload.email,
+        payload.name,
+        password_hash,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(Json(user.into()))
+}
+```
+
+---
+
+## Iterators
+
+```rust
+// ✅ Good - Use iterator methods
+let active_users: Vec<User> = users
+    .into_iter()
+    .filter(|u| u.is_active)
+    .map(|u| normalize_user(u))
+    .collect();
+
+// ✅ Good - Collect into specific types
+let user_map: HashMap<i64, User> = users
+    .into_iter()
+    .map(|u| (u.id, u))
+    .collect();
+
+// ✅ Good - Use iter() to borrow
+let names: Vec<&str> = users
+    .iter()
+    .map(|u| u.name.as_str())
+    .collect();
+
+// ✅ Good - Early exit with find/any
+let has_admin = users.iter().any(|u| u.role == Role::Admin);
+let admin = users.iter().find(|u| u.role == Role::Admin);
+```
+
+---
+
+## Testing
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_user_creation() {
+        let user = User::new("test@example.com", "Test User");
+        assert_eq!(user.email, "test@example.com");
+        assert!(user.id > 0);
+    }
+
+    #[test]
+    fn test_validation_error() {
+        let result = validate_email("");
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_async_operation() {
+        let result = async_fetch_data().await;
+        assert!(result.is_ok());
+    }
+}
+
+// Integration test in tests/
+#[tokio::test]
+async fn test_create_user_endpoint() {
+    let app = create_test_app().await;
+    
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/users")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"email":"test@example.com","name":"Test"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+```
+
+---
+
+## Commands
+
+```bash
+# Development
+cargo run                  # Run binary
+cargo watch -x run         # Watch mode (cargo-watch)
+
+# Build
+cargo build --release      # Release build
+
+# Test
+cargo test                 # Run all tests
+cargo test -- --nocapture  # Show println output
+
+# Linting
+cargo clippy               # Lint
+cargo fmt                  # Format
+
+# Check
+cargo check                # Fast compile check
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| `.unwrap()` everywhere | Use `?` and proper error types |
+| Cloning unnecessarily | Use references, check ownership |
+| `&String` in parameters | Use `&str` instead |
+| Manual loops | Use iterator methods |
+| Ignoring clippy | Run `cargo clippy` regularly |
+| Large structs by value | Pass by reference |

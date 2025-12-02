@@ -1,0 +1,476 @@
+---
+description: Flutter best practices with Dart, state management, and Material 3 design
+globs: ["**/*.dart", "lib/**/*"]
+alwaysApply: false
+---
+
+# Flutter Best Practices
+
+## Overview
+
+| Aspect | Recommendation |
+|--------|----------------|
+| Version | Flutter 3.x |
+| Design | Material 3 |
+| State | Riverpod or BLoC |
+| Architecture | Clean Architecture / MVVM |
+| Routing | go_router |
+
+---
+
+## Project Structure
+
+```
+lib/
+├── app/
+│   └── app.dart              # App widget & theme
+├── core/
+│   ├── constants/
+│   ├── errors/
+│   ├── network/
+│   └── utils/
+├── features/
+│   ├── auth/
+│   │   ├── data/
+│   │   │   ├── datasources/
+│   │   │   ├── models/
+│   │   │   └── repositories/
+│   │   ├── domain/
+│   │   │   ├── entities/
+│   │   │   ├── repositories/
+│   │   │   └── usecases/
+│   │   └── presentation/
+│   │       ├── pages/
+│   │       ├── widgets/
+│   │       └── providers/     # or blocs/
+│   └── home/
+│       └── ...
+├── shared/
+│   ├── widgets/
+│   └── providers/
+└── main.dart
+```
+
+---
+
+## Widget Patterns
+
+### Stateless Widget
+
+```dart
+class UserCard extends StatelessWidget {
+  const UserCard({
+    super.key,
+    required this.user,
+    this.onTap,
+  });
+
+  final User user;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Card(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              CircleAvatar(
+                backgroundImage: NetworkImage(user.avatarUrl),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      user.name,
+                      style: theme.textTheme.titleMedium,
+                    ),
+                    Text(
+                      user.email,
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+```
+
+### Stateful Widget
+
+```dart
+class Counter extends StatefulWidget {
+  const Counter({super.key, this.initialValue = 0});
+
+  final int initialValue;
+
+  @override
+  State<Counter> createState() => _CounterState();
+}
+
+class _CounterState extends State<Counter> {
+  late int _count;
+
+  @override
+  void initState() {
+    super.initState();
+    _count = widget.initialValue;
+  }
+
+  void _increment() {
+    setState(() {
+      _count++;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text('Count: $_count', style: Theme.of(context).textTheme.headlineMedium),
+        const SizedBox(height: 16),
+        FilledButton(
+          onPressed: _increment,
+          child: const Text('Increment'),
+        ),
+      ],
+    );
+  }
+}
+```
+
+---
+
+## State Management (Riverpod)
+
+### Setup
+
+```dart
+// main.dart
+void main() {
+  runApp(
+    const ProviderScope(
+      child: MyApp(),
+    ),
+  );
+}
+```
+
+### Providers
+
+```dart
+// providers/user_provider.dart
+import 'package:riverpod_annotation/riverpod_annotation.dart';
+
+part 'user_provider.g.dart';
+
+@riverpod
+class UserNotifier extends _$UserNotifier {
+  @override
+  FutureOr<User?> build() async {
+    return null;
+  }
+
+  Future<void> login(String email, String password) async {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
+      final user = await ref.read(authRepositoryProvider).login(email, password);
+      return user;
+    });
+  }
+
+  Future<void> logout() async {
+    await ref.read(authRepositoryProvider).logout();
+    state = const AsyncData(null);
+  }
+}
+
+// Simple state provider
+@riverpod
+int counter(CounterRef ref) => 0;
+
+// Async provider
+@riverpod
+Future<List<Post>> posts(PostsRef ref) async {
+  final repository = ref.watch(postRepositoryProvider);
+  return repository.getPosts();
+}
+```
+
+### Consumer Widget
+
+```dart
+class UserProfile extends ConsumerWidget {
+  const UserProfile({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final userAsync = ref.watch(userNotifierProvider);
+
+    return userAsync.when(
+      data: (user) => user != null
+          ? UserCard(user: user)
+          : const Text('Not logged in'),
+      loading: () => const CircularProgressIndicator(),
+      error: (error, stack) => Text('Error: $error'),
+    );
+  }
+}
+```
+
+---
+
+## Routing with go_router
+
+```dart
+// router/app_router.dart
+import 'package:go_router/go_router.dart';
+
+final appRouter = GoRouter(
+  initialLocation: '/',
+  redirect: (context, state) {
+    final isLoggedIn = // check auth state
+    final isLoginRoute = state.matchedLocation == '/login';
+
+    if (!isLoggedIn && !isLoginRoute) return '/login';
+    if (isLoggedIn && isLoginRoute) return '/';
+    return null;
+  },
+  routes: [
+    GoRoute(
+      path: '/',
+      builder: (context, state) => const HomeScreen(),
+      routes: [
+        GoRoute(
+          path: 'profile',
+          builder: (context, state) => const ProfileScreen(),
+        ),
+        GoRoute(
+          path: 'user/:id',
+          builder: (context, state) {
+            final id = state.pathParameters['id']!;
+            return UserDetailScreen(userId: id);
+          },
+        ),
+      ],
+    ),
+    GoRoute(
+      path: '/login',
+      builder: (context, state) => const LoginScreen(),
+    ),
+  ],
+);
+
+// Usage
+context.go('/profile');
+context.push('/user/123');
+context.pop();
+```
+
+---
+
+## Forms
+
+```dart
+class LoginForm extends StatefulWidget {
+  const LoginForm({super.key});
+
+  @override
+  State<LoginForm> createState() => _LoginFormState();
+}
+
+class _LoginFormState extends State<LoginForm> {
+  final _formKey = GlobalKey<FormState>();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (_formKey.currentState!.validate()) {
+      // Handle login
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Form(
+      key: _formKey,
+      child: Column(
+        children: [
+          TextFormField(
+            controller: _emailController,
+            decoration: const InputDecoration(labelText: 'Email'),
+            keyboardType: TextInputType.emailAddress,
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'Email is required';
+              }
+              if (!value.contains('@')) {
+                return 'Enter a valid email';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 16),
+          TextFormField(
+            controller: _passwordController,
+            decoration: const InputDecoration(labelText: 'Password'),
+            obscureText: true,
+            validator: (value) {
+              if (value == null || value.length < 8) {
+                return 'Password must be 8+ characters';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 24),
+          FilledButton(
+            onPressed: _submit,
+            child: const Text('Login'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+```
+
+---
+
+## API Calls with Dio
+
+```dart
+// core/network/api_client.dart
+import 'package:dio/dio.dart';
+
+class ApiClient {
+  final Dio _dio;
+
+  ApiClient()
+      : _dio = Dio(
+          BaseOptions(
+            baseUrl: 'https://api.example.com',
+            connectTimeout: const Duration(seconds: 10),
+            receiveTimeout: const Duration(seconds: 10),
+          ),
+        ) {
+    _dio.interceptors.add(LogInterceptor(responseBody: true));
+  }
+
+  Future<T> get<T>(String path, {Map<String, dynamic>? params}) async {
+    final response = await _dio.get(path, queryParameters: params);
+    return response.data as T;
+  }
+
+  Future<T> post<T>(String path, {dynamic data}) async {
+    final response = await _dio.post(path, data: data);
+    return response.data as T;
+  }
+}
+```
+
+---
+
+## Theming
+
+```dart
+// app/theme.dart
+import 'package:flutter/material.dart';
+
+class AppTheme {
+  static ThemeData light() {
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: Colors.blue,
+      brightness: Brightness.light,
+    );
+
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: colorScheme,
+      appBarTheme: AppBarTheme(
+        centerTitle: true,
+        backgroundColor: colorScheme.surface,
+        foregroundColor: colorScheme.onSurface,
+      ),
+      cardTheme: CardTheme(
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+    );
+  }
+
+  static ThemeData dark() {
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: Colors.blue,
+      brightness: Brightness.dark,
+    );
+
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: colorScheme,
+      // ... same structure as light
+    );
+  }
+}
+```
+
+---
+
+## Commands
+
+```bash
+# Development
+flutter run                    # Run on connected device
+flutter run -d chrome          # Run on web
+flutter run --release          # Release mode
+
+# Build
+flutter build apk              # Android APK
+flutter build appbundle        # Android App Bundle
+flutter build ios              # iOS
+flutter build web              # Web
+
+# Code generation
+dart run build_runner build    # Generate code
+dart run build_runner watch    # Watch mode
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| `setState` in async gap | Check `mounted` before setState |
+| Forgetting `super.key` | Always add to constructor |
+| Deep widget nesting | Extract to separate widgets |
+| Not disposing controllers | Override `dispose()` method |
+| Using `context` after async | Store reference before async |
+| Magic numbers | Use theme or constants |

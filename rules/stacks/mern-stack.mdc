@@ -1,0 +1,520 @@
+---
+description: MERN Stack best practices with MongoDB, Express, React, and Node.js
+globs: ["**/*.ts", "**/*.tsx", "**/*.js", "server/**/*", "client/**/*"]
+alwaysApply: false
+---
+
+# MERN Stack Best Practices
+
+## Overview
+
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| Database | MongoDB | Document database |
+| Backend | Express.js | Node.js web framework |
+| Frontend | React | UI library |
+| Runtime | Node.js | JavaScript runtime |
+| ODM | Mongoose | MongoDB object modeling |
+
+**Related rules**: `nodejs.mdc`, `react-19.mdc`, `typescript.mdc`
+
+---
+
+## Project Structure
+
+### Monorepo Structure
+
+```
+project/
+├── client/                 # React frontend
+│   ├── src/
+│   │   ├── components/
+│   │   ├── hooks/
+│   │   ├── pages/
+│   │   ├── services/       # API calls
+│   │   ├── stores/         # State management
+│   │   └── types/
+│   ├── package.json
+│   └── vite.config.ts
+├── server/                 # Express backend
+│   ├── src/
+│   │   ├── controllers/
+│   │   ├── middleware/
+│   │   ├── models/
+│   │   ├── routes/
+│   │   ├── services/
+│   │   ├── types/
+│   │   ├── utils/
+│   │   └── index.ts
+│   └── package.json
+├── shared/                 # Shared types/utils
+│   └── types/
+└── package.json            # Root workspace
+```
+
+---
+
+## Express Backend
+
+### App Setup
+
+```typescript
+// server/src/index.ts
+import express from 'express'
+import cors from 'cors'
+import helmet from 'helmet'
+import mongoose from 'mongoose'
+import { config } from './config'
+import { errorHandler } from './middleware/errorHandler'
+import { userRoutes } from './routes/user'
+import { postRoutes } from './routes/post'
+
+const app = express()
+
+// Middleware
+app.use(helmet())
+app.use(cors({ origin: config.clientUrl, credentials: true }))
+app.use(express.json())
+
+// Routes
+app.use('/api/users', userRoutes)
+app.use('/api/posts', postRoutes)
+
+// Error handling
+app.use(errorHandler)
+
+// Database connection
+mongoose.connect(config.mongoUri)
+  .then(() => console.log('Connected to MongoDB'))
+  .catch((err) => console.error('MongoDB connection error:', err))
+
+app.listen(config.port, () => {
+  console.log(`Server running on port ${config.port}`)
+})
+```
+
+### Mongoose Models
+
+```typescript
+// server/src/models/User.ts
+import mongoose, { Document, Schema } from 'mongoose'
+import bcrypt from 'bcryptjs'
+
+export interface IUser extends Document {
+  email: string
+  password: string
+  name: string
+  createdAt: Date
+  updatedAt: Date
+  comparePassword(candidatePassword: string): Promise<boolean>
+}
+
+const userSchema = new Schema<IUser>(
+  {
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+    password: {
+      type: String,
+      required: true,
+      minlength: 8,
+      select: false, // Don't include by default
+    },
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+  },
+  { timestamps: true }
+)
+
+// Hash password before saving
+userSchema.pre('save', async function (next) {
+  if (!this.isModified('password')) return next()
+  this.password = await bcrypt.hash(this.password, 12)
+  next()
+})
+
+// Compare password method
+userSchema.methods.comparePassword = async function (
+  candidatePassword: string
+): Promise<boolean> {
+  return bcrypt.compare(candidatePassword, this.password)
+}
+
+export const User = mongoose.model<IUser>('User', userSchema)
+```
+
+### Controllers
+
+```typescript
+// server/src/controllers/userController.ts
+import { Request, Response, NextFunction } from 'express'
+import { User } from '../models/User'
+import { AppError } from '../utils/AppError'
+import { generateToken } from '../utils/jwt'
+
+export const register = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { email, password, name } = req.body
+
+    const existingUser = await User.findOne({ email })
+    if (existingUser) {
+      throw new AppError('Email already in use', 400)
+    }
+
+    const user = await User.create({ email, password, name })
+    const token = generateToken(user._id)
+
+    res.status(201).json({
+      status: 'success',
+      data: {
+        user: { id: user._id, email: user.email, name: user.name },
+        token,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const login = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { email, password } = req.body
+
+    const user = await User.findOne({ email }).select('+password')
+    if (!user || !(await user.comparePassword(password))) {
+      throw new AppError('Invalid email or password', 401)
+    }
+
+    const token = generateToken(user._id)
+
+    res.json({
+      status: 'success',
+      data: {
+        user: { id: user._id, email: user.email, name: user.name },
+        token,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+```
+
+### Routes
+
+```typescript
+// server/src/routes/user.ts
+import { Router } from 'express'
+import { register, login, getProfile, updateProfile } from '../controllers/userController'
+import { protect } from '../middleware/auth'
+import { validate } from '../middleware/validate'
+import { registerSchema, loginSchema } from '../schemas/user'
+
+const router = Router()
+
+router.post('/register', validate(registerSchema), register)
+router.post('/login', validate(loginSchema), login)
+router.get('/profile', protect, getProfile)
+router.patch('/profile', protect, updateProfile)
+
+export const userRoutes = router
+```
+
+### Auth Middleware
+
+```typescript
+// server/src/middleware/auth.ts
+import { Request, Response, NextFunction } from 'express'
+import jwt from 'jsonwebtoken'
+import { User, IUser } from '../models/User'
+import { AppError } from '../utils/AppError'
+import { config } from '../config'
+
+interface JwtPayload {
+  id: string
+}
+
+declare global {
+  namespace Express {
+    interface Request {
+      user?: IUser
+    }
+  }
+}
+
+export const protect = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '')
+    
+    if (!token) {
+      throw new AppError('Not authenticated', 401)
+    }
+
+    const decoded = jwt.verify(token, config.jwtSecret) as JwtPayload
+    const user = await User.findById(decoded.id)
+
+    if (!user) {
+      throw new AppError('User not found', 401)
+    }
+
+    req.user = user
+    next()
+  } catch (error) {
+    next(new AppError('Invalid token', 401))
+  }
+}
+```
+
+### Error Handler
+
+```typescript
+// server/src/middleware/errorHandler.ts
+import { Request, Response, NextFunction } from 'express'
+import { AppError } from '../utils/AppError'
+
+export const errorHandler = (
+  err: Error,
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  if (err instanceof AppError) {
+    return res.status(err.statusCode).json({
+      status: 'error',
+      message: err.message,
+    })
+  }
+
+  console.error('Unexpected error:', err)
+  
+  res.status(500).json({
+    status: 'error',
+    message: 'Internal server error',
+  })
+}
+```
+
+---
+
+## React Frontend
+
+### API Service
+
+```typescript
+// client/src/services/api.ts
+const API_URL = import.meta.env.VITE_API_URL
+
+interface RequestOptions extends RequestInit {
+  auth?: boolean
+}
+
+async function request<T>(
+  endpoint: string,
+  options: RequestOptions = {}
+): Promise<T> {
+  const { auth = true, ...fetchOptions } = options
+  
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+    ...fetchOptions.headers,
+  }
+
+  if (auth) {
+    const token = localStorage.getItem('token')
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+  }
+
+  const response = await fetch(`${API_URL}${endpoint}`, {
+    ...fetchOptions,
+    headers,
+  })
+
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.message || 'Request failed')
+  }
+
+  return response.json()
+}
+
+export const api = {
+  get: <T>(endpoint: string) => request<T>(endpoint),
+  post: <T>(endpoint: string, data: unknown) =>
+    request<T>(endpoint, { method: 'POST', body: JSON.stringify(data) }),
+  patch: <T>(endpoint: string, data: unknown) =>
+    request<T>(endpoint, { method: 'PATCH', body: JSON.stringify(data) }),
+  delete: <T>(endpoint: string) =>
+    request<T>(endpoint, { method: 'DELETE' }),
+}
+```
+
+### Auth Hook
+
+```typescript
+// client/src/hooks/useAuth.ts
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
+import { api } from '../services/api'
+
+interface User {
+  id: string
+  email: string
+  name: string
+}
+
+interface AuthState {
+  user: User | null
+  token: string | null
+  isLoading: boolean
+  login: (email: string, password: string) => Promise<void>
+  register: (email: string, password: string, name: string) => Promise<void>
+  logout: () => void
+}
+
+export const useAuth = create<AuthState>()(
+  persist(
+    (set) => ({
+      user: null,
+      token: null,
+      isLoading: false,
+      
+      login: async (email, password) => {
+        set({ isLoading: true })
+        try {
+          const { data } = await api.post<{ data: { user: User; token: string } }>(
+            '/api/users/login',
+            { email, password }
+          )
+          localStorage.setItem('token', data.token)
+          set({ user: data.user, token: data.token })
+        } finally {
+          set({ isLoading: false })
+        }
+      },
+
+      register: async (email, password, name) => {
+        set({ isLoading: true })
+        try {
+          const { data } = await api.post<{ data: { user: User; token: string } }>(
+            '/api/users/register',
+            { email, password, name }
+          )
+          localStorage.setItem('token', data.token)
+          set({ user: data.user, token: data.token })
+        } finally {
+          set({ isLoading: false })
+        }
+      },
+
+      logout: () => {
+        localStorage.removeItem('token')
+        set({ user: null, token: null })
+      },
+    }),
+    { name: 'auth-storage', partialize: (state) => ({ token: state.token }) }
+  )
+)
+```
+
+---
+
+## Validation with Zod
+
+```typescript
+// server/src/schemas/user.ts
+import { z } from 'zod'
+
+export const registerSchema = z.object({
+  body: z.object({
+    email: z.string().email('Invalid email address'),
+    password: z.string().min(8, 'Password must be at least 8 characters'),
+    name: z.string().min(2, 'Name must be at least 2 characters'),
+  }),
+})
+
+export const loginSchema = z.object({
+  body: z.object({
+    email: z.string().email('Invalid email address'),
+    password: z.string().min(1, 'Password is required'),
+  }),
+})
+```
+
+```typescript
+// server/src/middleware/validate.ts
+import { Request, Response, NextFunction } from 'express'
+import { AnyZodObject, ZodError } from 'zod'
+
+export const validate = (schema: AnyZodObject) => 
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await schema.parseAsync({
+        body: req.body,
+        query: req.query,
+        params: req.params,
+      })
+      next()
+    } catch (error) {
+      if (error instanceof ZodError) {
+        res.status(400).json({
+          status: 'error',
+          errors: error.errors,
+        })
+      } else {
+        next(error)
+      }
+    }
+  }
+```
+
+---
+
+## Commands
+
+```bash
+# Development
+npm run dev              # Start both client and server
+npm run dev:server       # Server only
+npm run dev:client       # Client only
+
+# Database
+npm run db:seed          # Seed database
+
+# Build
+npm run build            # Build both
+npm run start            # Start production
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Storing passwords in plain text | Always hash with bcrypt |
+| No input validation | Use Zod or Joi for validation |
+| Exposing sensitive data | Use `select: false` in schemas |
+| CORS misconfiguration | Set specific origin, not `*` |
+| No error handling middleware | Add centralized error handler |
+| Token in localStorage only | Consider httpOnly cookies |

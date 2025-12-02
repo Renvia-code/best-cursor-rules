@@ -1,0 +1,490 @@
+---
+description: Next.js + Supabase stack best practices with Auth, shadcn/ui, and Tailwind CSS
+globs: ["**/*.ts", "**/*.tsx", "app/**/*", "supabase/**/*"]
+alwaysApply: false
+---
+
+# Next.js + Supabase Stack
+
+## Overview
+
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| Framework | Next.js 15 | App Router, Server Components |
+| Backend | Supabase | Auth, Database, Storage, Realtime |
+| Styling | Tailwind CSS | Utility-first CSS |
+| Components | shadcn/ui | Accessible UI components |
+| Language | TypeScript | Type safety |
+
+**Related rules**: `nextjs-15.mdc`, `supabase.mdc`, `tailwind.mdc`, `shadcn-ui.mdc`
+
+---
+
+## Project Structure
+
+```
+app/
+├── (auth)/
+│   ├── login/
+│   │   └── page.tsx
+│   ├── signup/
+│   │   └── page.tsx
+│   └── auth/
+│       └── callback/
+│           └── route.ts
+├── (dashboard)/
+│   ├── layout.tsx
+│   └── dashboard/
+│       └── page.tsx
+├── layout.tsx
+├── page.tsx
+└── globals.css
+components/
+├── ui/                   # shadcn/ui components
+└── ...
+lib/
+├── supabase/
+│   ├── client.ts         # Browser client
+│   ├── server.ts         # Server client
+│   └── middleware.ts     # Auth middleware helper
+└── utils.ts
+supabase/
+├── migrations/           # Database migrations
+└── config.toml          # Local config
+types/
+└── supabase.ts          # Generated types
+```
+
+---
+
+## Supabase Client Setup
+
+### Browser Client
+
+```typescript
+// lib/supabase/client.ts
+import { createBrowserClient } from '@supabase/ssr'
+import type { Database } from '@/types/supabase'
+
+export function createClient() {
+  return createBrowserClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
+}
+```
+
+### Server Client
+
+```typescript
+// lib/supabase/server.ts
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
+import type { Database } from '@/types/supabase'
+
+export async function createClient() {
+  const cookieStore = await cookies()
+
+  return createServerClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll()
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            )
+          } catch {
+            // Called from Server Component - ignore
+          }
+        },
+      },
+    }
+  )
+}
+```
+
+### Middleware
+
+```typescript
+// middleware.ts
+import { createServerClient } from '@supabase/ssr'
+import { NextResponse, type NextRequest } from 'next/server'
+
+export async function middleware(request: NextRequest) {
+  let supabaseResponse = NextResponse.next({ request })
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll()
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) => 
+            request.cookies.set(name, value)
+          )
+          supabaseResponse = NextResponse.next({ request })
+          cookiesToSet.forEach(({ name, value, options }) =>
+            supabaseResponse.cookies.set(name, value, options)
+          )
+        },
+      },
+    }
+  )
+
+  const { data: { user } } = await supabase.auth.getUser()
+
+  // Protect dashboard routes
+  if (!user && request.nextUrl.pathname.startsWith('/dashboard')) {
+    return NextResponse.redirect(new URL('/login', request.url))
+  }
+
+  return supabaseResponse
+}
+
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+}
+```
+
+---
+
+## Authentication
+
+### Server Actions
+
+```typescript
+// app/(auth)/login/actions.ts
+'use server'
+
+import { revalidatePath } from 'next/cache'
+import { redirect } from 'next/navigation'
+import { createClient } from '@/lib/supabase/server'
+
+export async function login(formData: FormData) {
+  const supabase = await createClient()
+
+  const { error } = await supabase.auth.signInWithPassword({
+    email: formData.get('email') as string,
+    password: formData.get('password') as string,
+  })
+
+  if (error) {
+    return { error: error.message }
+  }
+
+  revalidatePath('/', 'layout')
+  redirect('/dashboard')
+}
+
+export async function signup(formData: FormData) {
+  const supabase = await createClient()
+
+  const { error } = await supabase.auth.signUp({
+    email: formData.get('email') as string,
+    password: formData.get('password') as string,
+    options: {
+      emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`,
+    },
+  })
+
+  if (error) {
+    return { error: error.message }
+  }
+
+  return { success: 'Check your email for confirmation link' }
+}
+
+export async function signOut() {
+  const supabase = await createClient()
+  await supabase.auth.signOut()
+  redirect('/login')
+}
+```
+
+### OAuth Callback Route
+
+```typescript
+// app/auth/callback/route.ts
+import { createClient } from '@/lib/supabase/server'
+import { NextResponse } from 'next/server'
+
+export async function GET(request: Request) {
+  const { searchParams, origin } = new URL(request.url)
+  const code = searchParams.get('code')
+  const next = searchParams.get('next') ?? '/dashboard'
+
+  if (code) {
+    const supabase = await createClient()
+    const { error } = await supabase.auth.exchangeCodeForSession(code)
+    
+    if (!error) {
+      return NextResponse.redirect(`${origin}${next}`)
+    }
+  }
+
+  return NextResponse.redirect(`${origin}/login?error=Could not authenticate`)
+}
+```
+
+### Login Form with shadcn/ui
+
+```tsx
+// app/(auth)/login/page.tsx
+import { login, signup } from './actions'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+
+export default function LoginPage() {
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>Welcome back</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input id="email" name="email" type="email" required />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <Input id="password" name="password" type="password" required />
+            </div>
+            <div className="flex gap-2">
+              <Button formAction={login} className="flex-1">
+                Log in
+              </Button>
+              <Button formAction={signup} variant="outline" className="flex-1">
+                Sign up
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+```
+
+---
+
+## Data Fetching
+
+### Server Components
+
+```tsx
+// app/(dashboard)/dashboard/page.tsx
+import { createClient } from '@/lib/supabase/server'
+import { redirect } from 'next/navigation'
+
+export default async function DashboardPage() {
+  const supabase = await createClient()
+  
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) {
+    redirect('/login')
+  }
+
+  const { data: posts } = await supabase
+    .from('posts')
+    .select('*, author:profiles(name, avatar_url)')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false })
+
+  return (
+    <div>
+      <h1>Welcome, {user.email}</h1>
+      <ul>
+        {posts?.map((post) => (
+          <li key={post.id}>{post.title}</li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+```
+
+### Server Actions for CRUD
+
+```typescript
+// app/(dashboard)/posts/actions.ts
+'use server'
+
+import { revalidatePath } from 'next/cache'
+import { createClient } from '@/lib/supabase/server'
+
+export async function createPost(formData: FormData) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  if (!user) throw new Error('Not authenticated')
+
+  const { error } = await supabase.from('posts').insert({
+    title: formData.get('title') as string,
+    content: formData.get('content') as string,
+    user_id: user.id,
+  })
+
+  if (error) throw error
+  
+  revalidatePath('/dashboard')
+}
+
+export async function deletePost(id: string) {
+  const supabase = await createClient()
+  
+  const { error } = await supabase
+    .from('posts')
+    .delete()
+    .eq('id', id)
+
+  if (error) throw error
+  
+  revalidatePath('/dashboard')
+}
+```
+
+---
+
+## Realtime Subscriptions
+
+```tsx
+'use client'
+
+import { useEffect, useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import type { Database } from '@/types/supabase'
+
+type Post = Database['public']['Tables']['posts']['Row']
+
+export function RealtimePosts({ initialPosts }: { initialPosts: Post[] }) {
+  const [posts, setPosts] = useState(initialPosts)
+  const supabase = createClient()
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('posts')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'posts' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            setPosts((prev) => [payload.new as Post, ...prev])
+          }
+          if (payload.eventType === 'DELETE') {
+            setPosts((prev) => prev.filter((p) => p.id !== payload.old.id))
+          }
+          if (payload.eventType === 'UPDATE') {
+            setPosts((prev) =>
+              prev.map((p) => (p.id === payload.new.id ? payload.new as Post : p))
+            )
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [supabase])
+
+  return (
+    <ul>
+      {posts.map((post) => (
+        <li key={post.id}>{post.title}</li>
+      ))}
+    </ul>
+  )
+}
+```
+
+---
+
+## Type Generation
+
+```bash
+# Generate TypeScript types from your database
+npx supabase gen types typescript --local > types/supabase.ts
+
+# Or from remote project
+npx supabase gen types typescript --project-id your-project-id > types/supabase.ts
+```
+
+---
+
+## Row Level Security
+
+```sql
+-- Enable RLS
+ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
+
+-- Users can read all posts
+CREATE POLICY "Public read access" ON posts
+  FOR SELECT USING (true);
+
+-- Users can only insert their own posts
+CREATE POLICY "Users can insert own posts" ON posts
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- Users can only update their own posts
+CREATE POLICY "Users can update own posts" ON posts
+  FOR UPDATE USING (auth.uid() = user_id);
+
+-- Users can only delete their own posts
+CREATE POLICY "Users can delete own posts" ON posts
+  FOR DELETE USING (auth.uid() = user_id);
+```
+
+---
+
+## Environment Variables
+
+```bash
+# .env.local
+NEXT_PUBLIC_SUPABASE_URL=your-project-url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+```
+
+---
+
+## Commands
+
+```bash
+# Development
+npm run dev                    # Start Next.js dev server
+npx supabase start             # Start local Supabase
+
+# Database
+npx supabase db reset          # Reset local database
+npx supabase migration new     # Create migration
+npx supabase db push           # Push migrations to remote
+
+# Types
+npx supabase gen types typescript --local > types/supabase.ts
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Using old auth helpers | Use `@supabase/ssr` package |
+| Not awaiting cookies() | Always `await cookies()` in Next.js 15 |
+| Missing middleware | Add middleware for session refresh |
+| Skipping RLS | Always enable RLS on tables |
+| Client in Server Components | Use `createClient` from server.ts |
+| Not revalidating after mutations | Call `revalidatePath()` |

@@ -1,0 +1,325 @@
+---
+description: Python best practices with type hints, async patterns, and modern idioms
+globs: ["**/*.py", "src/**/*.py", "tests/**/*.py"]
+alwaysApply: false
+---
+
+# Python Best Practices
+
+## Overview
+
+| Aspect | Recommendation |
+|--------|----------------|
+| Version | Python 3.11+ |
+| Type Hints | Always use |
+| Formatter | Ruff or Black |
+| Linter | Ruff |
+| Package Manager | uv or Poetry |
+
+---
+
+## Type Hints
+
+### Basic Types
+
+```python
+from typing import Optional
+
+# ✅ Use type hints everywhere
+def greet(name: str) -> str:
+    return f"Hello, {name}!"
+
+# ✅ Optional (can be None)
+def find_user(user_id: int) -> Optional[dict]:
+    # Returns dict or None
+    pass
+
+# ✅ Python 3.10+ union syntax
+def process(value: str | int) -> str:
+    return str(value)
+```
+
+### Collections
+
+```python
+from typing import TypedDict
+
+# ✅ List, dict, set (Python 3.9+)
+def process_items(items: list[str]) -> dict[str, int]:
+    return {item: len(item) for item in items}
+
+# ✅ TypedDict for structured dicts
+class User(TypedDict):
+    id: int
+    name: str
+    email: str
+
+def get_user() -> User:
+    return {"id": 1, "name": "John", "email": "john@example.com"}
+```
+
+### Generics
+
+```python
+from typing import TypeVar, Generic
+
+T = TypeVar('T')
+
+class Repository(Generic[T]):
+    def __init__(self) -> None:
+        self.items: list[T] = []
+    
+    def add(self, item: T) -> None:
+        self.items.append(item)
+    
+    def get_all(self) -> list[T]:
+        return self.items
+```
+
+---
+
+## Modern Python Idioms
+
+### Dataclasses
+
+```python
+from dataclasses import dataclass, field
+from datetime import datetime
+
+@dataclass
+class User:
+    id: int
+    name: str
+    email: str
+    created_at: datetime = field(default_factory=datetime.now)
+    tags: list[str] = field(default_factory=list)
+
+# Frozen (immutable)
+@dataclass(frozen=True)
+class Config:
+    api_url: str
+    timeout: int = 30
+```
+
+### Pydantic Models (Validation)
+
+```python
+from pydantic import BaseModel, EmailStr, Field
+
+class UserCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    email: EmailStr
+    age: int = Field(..., ge=0, le=150)
+
+class UserResponse(BaseModel):
+    id: int
+    name: str
+    email: str
+    
+    model_config = {"from_attributes": True}  # Pydantic v2
+```
+
+### Pattern Matching (3.10+)
+
+```python
+def handle_response(response: dict) -> str:
+    match response:
+        case {"status": "success", "data": data}:
+            return f"Got data: {data}"
+        case {"status": "error", "message": msg}:
+            return f"Error: {msg}"
+        case {"status": status}:
+            return f"Unknown status: {status}"
+        case _:
+            return "Invalid response"
+```
+
+---
+
+## Async Patterns
+
+### Basic Async
+
+```python
+import asyncio
+from typing import Any
+
+async def fetch_data(url: str) -> dict[str, Any]:
+    # Simulate async operation
+    await asyncio.sleep(1)
+    return {"url": url, "data": "..."}
+
+async def main() -> None:
+    result = await fetch_data("https://api.example.com")
+    print(result)
+
+# Run
+asyncio.run(main())
+```
+
+### Concurrent Execution
+
+```python
+import asyncio
+
+async def fetch_all(urls: list[str]) -> list[dict]:
+    # ✅ Run concurrently
+    tasks = [fetch_data(url) for url in urls]
+    results = await asyncio.gather(*tasks)
+    return results
+
+# With error handling
+async def fetch_all_safe(urls: list[str]) -> list[dict | Exception]:
+    tasks = [fetch_data(url) for url in urls]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    return results
+```
+
+### Async Context Managers
+
+```python
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
+
+@asynccontextmanager
+async def get_db_connection() -> AsyncIterator[Connection]:
+    conn = await create_connection()
+    try:
+        yield conn
+    finally:
+        await conn.close()
+
+# Usage
+async def get_users() -> list[User]:
+    async with get_db_connection() as conn:
+        return await conn.fetch_all("SELECT * FROM users")
+```
+
+---
+
+## Error Handling
+
+### Custom Exceptions
+
+```python
+class AppError(Exception):
+    """Base application error."""
+    pass
+
+class NotFoundError(AppError):
+    """Resource not found."""
+    def __init__(self, resource: str, id: int):
+        self.resource = resource
+        self.id = id
+        super().__init__(f"{resource} with id {id} not found")
+
+class ValidationError(AppError):
+    """Validation failed."""
+    def __init__(self, field: str, message: str):
+        self.field = field
+        super().__init__(f"{field}: {message}")
+```
+
+### Error Handling Patterns
+
+```python
+from typing import TypeVar, Generic
+from dataclasses import dataclass
+
+T = TypeVar('T')
+E = TypeVar('E', bound=Exception)
+
+@dataclass
+class Result(Generic[T, E]):
+    value: T | None = None
+    error: E | None = None
+    
+    @property
+    def is_ok(self) -> bool:
+        return self.error is None
+    
+    @classmethod
+    def ok(cls, value: T) -> "Result[T, E]":
+        return cls(value=value)
+    
+    @classmethod
+    def err(cls, error: E) -> "Result[T, E]":
+        return cls(error=error)
+
+# Usage
+def divide(a: int, b: int) -> Result[float, ZeroDivisionError]:
+    if b == 0:
+        return Result.err(ZeroDivisionError("Cannot divide by zero"))
+    return Result.ok(a / b)
+```
+
+---
+
+## Project Structure
+
+```
+my_project/
+├── src/
+│   └── my_project/
+│       ├── __init__.py
+│       ├── main.py
+│       ├── models/
+│       │   ├── __init__.py
+│       │   └── user.py
+│       ├── services/
+│       │   ├── __init__.py
+│       │   └── user_service.py
+│       └── utils/
+│           └── __init__.py
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py
+│   └── test_user.py
+├── pyproject.toml
+└── README.md
+```
+
+---
+
+## Configuration
+
+### pyproject.toml
+
+```toml
+[project]
+name = "my-project"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0",
+    "httpx>=0.25",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.1",
+    "mypy>=1.0",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| No type hints | Add types to all functions |
+| Mutable default args | Use `field(default_factory=list)` |
+| Bare `except:` | Catch specific exceptions |
+| Using `dict` for data | Use dataclasses or Pydantic |
+| Blocking calls in async | Use async libraries (httpx, asyncpg) |
+| Global mutable state | Use dependency injection |

@@ -1,0 +1,392 @@
+---
+description: Go best practices for error handling, concurrency, and project structure
+globs: ["**/*.go", "cmd/**/*", "internal/**/*", "pkg/**/*"]
+alwaysApply: false
+---
+
+# Go Best Practices
+
+## Overview
+
+| Aspect | Recommendation |
+|--------|----------------|
+| Version | Go 1.21+ |
+| Modules | Always use go modules |
+| Errors | Return errors, don't panic |
+| Concurrency | Channels and goroutines |
+
+---
+
+## Project Structure
+
+```
+myproject/
+├── cmd/
+│   └── myapp/
+│       └── main.go          # Application entry point
+├── internal/                 # Private application code
+│   ├── handlers/
+│   ├── services/
+│   └── repository/
+├── pkg/                      # Public libraries
+│   └── utils/
+├── api/                      # API definitions (OpenAPI, proto)
+├── config/
+├── go.mod
+├── go.sum
+└── Makefile
+```
+
+---
+
+## Error Handling
+
+### Return Errors, Don't Panic
+
+```go
+// ✅ Return errors
+func GetUser(id string) (*User, error) {
+    user, err := db.Find(id)
+    if err != nil {
+        return nil, fmt.Errorf("failed to get user %s: %w", id, err)
+    }
+    return user, nil
+}
+
+// ❌ Don't panic for expected errors
+func GetUser(id string) *User {
+    user, err := db.Find(id)
+    if err != nil {
+        panic(err)  // Bad!
+    }
+    return user
+}
+```
+
+### Custom Error Types
+
+```go
+type NotFoundError struct {
+    Resource string
+    ID       string
+}
+
+func (e *NotFoundError) Error() string {
+    return fmt.Sprintf("%s with id %s not found", e.Resource, e.ID)
+}
+
+// Check error type
+func HandleError(err error) {
+    var notFound *NotFoundError
+    if errors.As(err, &notFound) {
+        // Handle not found
+    }
+}
+```
+
+### Error Wrapping
+
+```go
+import "fmt"
+
+func ProcessOrder(id string) error {
+    order, err := GetOrder(id)
+    if err != nil {
+        // Wrap with context
+        return fmt.Errorf("process order %s: %w", id, err)
+    }
+    
+    if err := ValidateOrder(order); err != nil {
+        return fmt.Errorf("validate order: %w", err)
+    }
+    
+    return nil
+}
+```
+
+---
+
+## Concurrency
+
+### Goroutines and Channels
+
+```go
+func FetchAll(urls []string) []Result {
+    results := make(chan Result, len(urls))
+    
+    for _, url := range urls {
+        go func(u string) {
+            data, err := fetch(u)
+            results <- Result{URL: u, Data: data, Err: err}
+        }(url)
+    }
+    
+    var output []Result
+    for range urls {
+        output = append(output, <-results)
+    }
+    
+    return output
+}
+```
+
+### Context for Cancellation
+
+```go
+func ProcessWithTimeout(ctx context.Context, data string) error {
+    ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+    defer cancel()
+    
+    select {
+    case result := <-doWork(data):
+        return handleResult(result)
+    case <-ctx.Done():
+        return ctx.Err()
+    }
+}
+```
+
+### WaitGroup for Synchronization
+
+```go
+func ProcessItems(items []Item) {
+    var wg sync.WaitGroup
+    
+    for _, item := range items {
+        wg.Add(1)
+        go func(i Item) {
+            defer wg.Done()
+            process(i)
+        }(item)
+    }
+    
+    wg.Wait()  // Wait for all goroutines
+}
+```
+
+### Mutex for Shared State
+
+```go
+type Counter struct {
+    mu    sync.Mutex
+    value int
+}
+
+func (c *Counter) Increment() {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    c.value++
+}
+
+func (c *Counter) Value() int {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    return c.value
+}
+```
+
+---
+
+## Interfaces
+
+### Small Interfaces
+
+```go
+// ✅ Small, focused interfaces
+type Reader interface {
+    Read(p []byte) (n int, err error)
+}
+
+type Writer interface {
+    Write(p []byte) (n int, err error)
+}
+
+type ReadWriter interface {
+    Reader
+    Writer
+}
+```
+
+### Accept Interfaces, Return Structs
+
+```go
+// ✅ Accept interface
+func Process(r io.Reader) error {
+    data, err := io.ReadAll(r)
+    if err != nil {
+        return err
+    }
+    // Process data
+    return nil
+}
+
+// ✅ Return concrete type
+func NewServer(addr string) *Server {
+    return &Server{addr: addr}
+}
+```
+
+---
+
+## Structs and Methods
+
+### Constructor Functions
+
+```go
+type Server struct {
+    addr    string
+    timeout time.Duration
+    logger  *log.Logger
+}
+
+// Constructor with defaults
+func NewServer(addr string, opts ...Option) *Server {
+    s := &Server{
+        addr:    addr,
+        timeout: 30 * time.Second,
+        logger:  log.Default(),
+    }
+    
+    for _, opt := range opts {
+        opt(s)
+    }
+    
+    return s
+}
+
+// Functional options
+type Option func(*Server)
+
+func WithTimeout(d time.Duration) Option {
+    return func(s *Server) {
+        s.timeout = d
+    }
+}
+```
+
+### Pointer vs Value Receivers
+
+```go
+// ✅ Pointer receiver - modifies state
+func (s *Server) SetTimeout(d time.Duration) {
+    s.timeout = d
+}
+
+// ✅ Value receiver - read-only, small struct
+func (s Server) Addr() string {
+    return s.addr
+}
+
+// Rule: If one method needs pointer, all should use pointer
+```
+
+---
+
+## HTTP Handlers
+
+### Standard Handler
+
+```go
+func GetUserHandler(w http.ResponseWriter, r *http.Request) {
+    id := r.PathValue("id")  // Go 1.22+
+    
+    user, err := GetUser(id)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(user)
+}
+
+func main() {
+    mux := http.NewServeMux()
+    mux.HandleFunc("GET /users/{id}", GetUserHandler)
+    
+    http.ListenAndServe(":8080", mux)
+}
+```
+
+### Middleware Pattern
+
+```go
+func LoggingMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        start := time.Now()
+        next.ServeHTTP(w, r)
+        log.Printf("%s %s %v", r.Method, r.URL.Path, time.Since(start))
+    })
+}
+
+// Chain middleware
+handler := LoggingMiddleware(AuthMiddleware(mux))
+```
+
+---
+
+## Testing
+
+### Table-Driven Tests
+
+```go
+func TestAdd(t *testing.T) {
+    tests := []struct {
+        name     string
+        a, b     int
+        expected int
+    }{
+        {"positive", 1, 2, 3},
+        {"negative", -1, -2, -3},
+        {"zero", 0, 0, 0},
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            result := Add(tt.a, tt.b)
+            if result != tt.expected {
+                t.Errorf("Add(%d, %d) = %d; want %d", 
+                    tt.a, tt.b, result, tt.expected)
+            }
+        })
+    }
+}
+```
+
+### Mocking with Interfaces
+
+```go
+type UserRepository interface {
+    Find(id string) (*User, error)
+}
+
+// Real implementation
+type PostgresUserRepo struct {
+    db *sql.DB
+}
+
+// Mock for testing
+type MockUserRepo struct {
+    users map[string]*User
+}
+
+func (m *MockUserRepo) Find(id string) (*User, error) {
+    if user, ok := m.users[id]; ok {
+        return user, nil
+    }
+    return nil, errors.New("not found")
+}
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Ignoring errors | Always handle or return errors |
+| Goroutine leaks | Use context for cancellation |
+| Data races | Use mutex or channels |
+| Large interfaces | Keep interfaces small (1-3 methods) |
+| `init()` abuse | Use explicit initialization |
+| Package-level vars | Pass dependencies explicitly |

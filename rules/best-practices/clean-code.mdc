@@ -1,0 +1,348 @@
+---
+description: Clean code principles for maintainable, readable, and well-structured code
+globs: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.py", "**/*.go"]
+alwaysApply: false
+---
+
+# Clean Code Best Practices
+
+## Overview
+
+| Principle | Description |
+|-----------|-------------|
+| Readability | Code is read more than written |
+| Simplicity | Simple is better than complex |
+| Consistency | Follow established patterns |
+| Testability | Write code that's easy to test |
+
+---
+
+## Naming Conventions
+
+### Use Descriptive Names
+
+```typescript
+// ❌ Bad - Unclear names
+const d = new Date()
+const u = getUser()
+function calc(a, b) { return a + b }
+
+// ✅ Good - Clear, descriptive names
+const currentDate = new Date()
+const authenticatedUser = getUser()
+function calculateTotal(price, quantity) { return price * quantity }
+```
+
+### Use Consistent Naming Patterns
+
+```typescript
+// Boolean variables: is, has, should, can
+const isActive = true
+const hasPermission = user.role === 'admin'
+const shouldRefresh = lastUpdate < Date.now() - 60000
+const canEdit = hasPermission && isActive
+
+// Functions: verb + noun
+function getUser(id: string) {}
+function createOrder(data: OrderData) {}
+function validateEmail(email: string) {}
+function calculateDiscount(price: number) {}
+
+// Event handlers: handle + event
+function handleClick() {}
+function handleSubmit() {}
+function handleUserCreated() {}
+```
+
+---
+
+## Functions
+
+### Keep Functions Small and Focused
+
+```typescript
+// ❌ Bad - Does too many things
+function processOrder(order) {
+  // Validate order
+  if (!order.items) throw new Error('No items')
+  if (!order.userId) throw new Error('No user')
+  
+  // Calculate total
+  let total = 0
+  for (const item of order.items) {
+    total += item.price * item.quantity
+  }
+  
+  // Apply discount
+  if (order.coupon) {
+    total *= 0.9
+  }
+  
+  // Save to database
+  db.orders.create({ ...order, total })
+  
+  // Send email
+  sendEmail(order.userId, 'Order confirmed')
+}
+
+// ✅ Good - Single responsibility
+function validateOrder(order: Order): void {
+  if (!order.items?.length) throw new Error('Order must have items')
+  if (!order.userId) throw new Error('Order must have userId')
+}
+
+function calculateOrderTotal(items: OrderItem[], coupon?: Coupon): number {
+  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0)
+  return coupon ? applyDiscount(subtotal, coupon) : subtotal
+}
+
+function processOrder(order: Order): void {
+  validateOrder(order)
+  const total = calculateOrderTotal(order.items, order.coupon)
+  saveOrder({ ...order, total })
+  notifyUser(order.userId, 'Order confirmed')
+}
+```
+
+### Use Early Returns
+
+```typescript
+// ❌ Bad - Nested conditionals
+function getDiscount(user) {
+  if (user) {
+    if (user.isPremium) {
+      if (user.yearsActive > 5) {
+        return 0.3
+      } else {
+        return 0.2
+      }
+    } else {
+      return 0.1
+    }
+  } else {
+    return 0
+  }
+}
+
+// ✅ Good - Early returns
+function getDiscount(user: User | null): number {
+  if (!user) return 0
+  if (!user.isPremium) return 0.1
+  if (user.yearsActive > 5) return 0.3
+  return 0.2
+}
+```
+
+---
+
+## DRY (Don't Repeat Yourself)
+
+### Extract Common Logic
+
+```typescript
+// ❌ Bad - Repeated code
+function createUser(data) {
+  if (!data.email) throw new Error('Email required')
+  if (!data.email.includes('@')) throw new Error('Invalid email')
+  // ... create user
+}
+
+function updateUser(data) {
+  if (!data.email) throw new Error('Email required')
+  if (!data.email.includes('@')) throw new Error('Invalid email')
+  // ... update user
+}
+
+// ✅ Good - Extracted into reusable function
+function validateEmail(email: string): void {
+  if (!email) throw new Error('Email required')
+  if (!email.includes('@')) throw new Error('Invalid email')
+}
+
+function createUser(data: UserData) {
+  validateEmail(data.email)
+  // ... create user
+}
+
+function updateUser(data: UserData) {
+  validateEmail(data.email)
+  // ... update user
+}
+```
+
+---
+
+## SOLID Principles
+
+### Single Responsibility
+
+```typescript
+// ❌ Bad - Multiple responsibilities
+class User {
+  save() { /* saves to DB */ }
+  sendEmail() { /* sends email */ }
+  generateReport() { /* creates PDF */ }
+}
+
+// ✅ Good - Single responsibility each
+class User {
+  constructor(public data: UserData) {}
+}
+
+class UserRepository {
+  save(user: User) { /* saves to DB */ }
+}
+
+class EmailService {
+  sendWelcome(user: User) { /* sends email */ }
+}
+```
+
+### Dependency Inversion
+
+```typescript
+// ❌ Bad - Tightly coupled
+class OrderService {
+  private db = new PostgresDatabase()
+  
+  createOrder(data: OrderData) {
+    this.db.insert('orders', data)
+  }
+}
+
+// ✅ Good - Depends on abstraction
+interface Database {
+  insert(table: string, data: unknown): Promise<void>
+}
+
+class OrderService {
+  constructor(private db: Database) {}
+  
+  createOrder(data: OrderData) {
+    this.db.insert('orders', data)
+  }
+}
+```
+
+---
+
+## Error Handling
+
+### Use Specific Errors
+
+```typescript
+// ❌ Bad - Generic errors
+throw new Error('Something went wrong')
+
+// ✅ Good - Specific, actionable errors
+class ValidationError extends Error {
+  constructor(public field: string, message: string) {
+    super(`${field}: ${message}`)
+    this.name = 'ValidationError'
+  }
+}
+
+class NotFoundError extends Error {
+  constructor(resource: string, id: string) {
+    super(`${resource} with id ${id} not found`)
+    this.name = 'NotFoundError'
+  }
+}
+
+// Usage
+throw new ValidationError('email', 'must be a valid email address')
+throw new NotFoundError('User', userId)
+```
+
+### Handle Errors at the Right Level
+
+```typescript
+// Low level - throw specific errors
+async function getUser(id: string): Promise<User> {
+  const user = await db.users.findById(id)
+  if (!user) throw new NotFoundError('User', id)
+  return user
+}
+
+// High level - handle and respond appropriately
+async function handleGetUser(req: Request, res: Response) {
+  try {
+    const user = await getUser(req.params.id)
+    res.json(user)
+  } catch (error) {
+    if (error instanceof NotFoundError) {
+      res.status(404).json({ error: error.message })
+    } else {
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  }
+}
+```
+
+---
+
+## Comments
+
+### Code Should Be Self-Documenting
+
+```typescript
+// ❌ Bad - Comment explains what code does
+// Loop through users and filter active ones
+const result = users.filter(u => u.active)
+
+// ✅ Good - Code is self-explanatory
+const activeUsers = users.filter(user => user.isActive)
+```
+
+### Use Comments for Why, Not What
+
+```typescript
+// ✅ Good - Explains why, not what
+// Using 1.5 multiplier as per business requirement from finance team
+// See: https://docs.company.com/pricing#premium-multiplier
+const premiumPrice = basePrice * 1.5
+
+// ✅ Good - Documents non-obvious behavior
+// setTimeout(0) moves execution to next event loop tick,
+// ensuring DOM updates are complete before measuring
+setTimeout(() => measureElement(), 0)
+```
+
+---
+
+## File Organization
+
+### Group Related Code
+
+```
+src/
+├── features/
+│   └── users/
+│       ├── components/
+│       │   ├── UserCard.tsx
+│       │   └── UserList.tsx
+│       ├── hooks/
+│       │   └── useUsers.ts
+│       ├── services/
+│       │   └── userService.ts
+│       └── types.ts
+├── shared/
+│   ├── components/
+│   ├── hooks/
+│   └── utils/
+└── lib/
+    └── api.ts
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Magic numbers | Use named constants |
+| Deep nesting | Use early returns, extract functions |
+| Long functions | Break into smaller, focused functions |
+| Unclear names | Use descriptive, intention-revealing names |
+| Comments explaining what | Make code self-documenting |
+| Copy-paste code | Extract into reusable functions |

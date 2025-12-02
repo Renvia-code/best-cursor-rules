@@ -1,0 +1,438 @@
+---
+description: Node.js backend best practices with Express, error handling, and async patterns
+globs: ["**/*.js", "**/*.ts", "server/**/*", "src/**/*"]
+alwaysApply: false
+---
+
+# Node.js Backend Best Practices
+
+## Overview
+
+| Aspect | Recommendation |
+|--------|----------------|
+| Runtime | Node.js 20+ LTS |
+| Framework | Express or Fastify |
+| Language | TypeScript |
+| Validation | Zod |
+| ORM | Prisma or Drizzle |
+
+---
+
+## Project Structure
+
+```
+src/
+├── index.ts             # Entry point
+├── app.ts               # Express app setup
+├── config/
+│   └── index.ts         # Configuration
+├── routes/
+│   ├── index.ts         # Route aggregator
+│   └── users.ts         # User routes
+├── controllers/
+│   └── users.ts         # Request handlers
+├── services/
+│   └── users.ts         # Business logic
+├── middleware/
+│   ├── auth.ts
+│   └── errorHandler.ts
+├── utils/
+│   └── errors.ts
+└── types/
+    └── index.ts
+```
+
+---
+
+## Express Setup
+
+### Application
+
+```typescript
+// src/app.ts
+import express from 'express'
+import cors from 'cors'
+import helmet from 'helmet'
+import { errorHandler } from './middleware/errorHandler'
+import routes from './routes'
+
+const app = express()
+
+// Security middleware
+app.use(helmet())
+app.use(cors({ origin: process.env.CORS_ORIGIN }))
+
+// Body parsing
+app.use(express.json())
+app.use(express.urlencoded({ extended: true }))
+
+// Routes
+app.use('/api', routes)
+
+// Error handling (must be last)
+app.use(errorHandler)
+
+export default app
+```
+
+### Entry Point
+
+```typescript
+// src/index.ts
+import app from './app'
+import { config } from './config'
+
+const server = app.listen(config.port, () => {
+  console.log(`Server running on port ${config.port}`)
+})
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully')
+  server.close(() => {
+    console.log('Server closed')
+    process.exit(0)
+  })
+})
+```
+
+---
+
+## Routes and Controllers
+
+### Route Definition
+
+```typescript
+// src/routes/users.ts
+import { Router } from 'express'
+import { UserController } from '../controllers/users'
+import { authenticate } from '../middleware/auth'
+import { validate } from '../middleware/validate'
+import { createUserSchema, updateUserSchema } from '../schemas/user'
+
+const router = Router()
+const controller = new UserController()
+
+router.get('/', controller.getAll)
+router.get('/:id', controller.getById)
+router.post('/', validate(createUserSchema), controller.create)
+router.patch('/:id', authenticate, validate(updateUserSchema), controller.update)
+router.delete('/:id', authenticate, controller.delete)
+
+export default router
+```
+
+### Controller
+
+```typescript
+// src/controllers/users.ts
+import { Request, Response, NextFunction } from 'express'
+import { UserService } from '../services/users'
+import { AppError } from '../utils/errors'
+
+export class UserController {
+  private userService = new UserService()
+
+  getAll = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const users = await this.userService.findAll()
+      res.json(users)
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  getById = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = await this.userService.findById(req.params.id)
+      if (!user) {
+        throw new AppError('User not found', 404)
+      }
+      res.json(user)
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  create = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = await this.userService.create(req.body)
+      res.status(201).json(user)
+    } catch (error) {
+      next(error)
+    }
+  }
+}
+```
+
+---
+
+## Error Handling
+
+### Custom Error Class
+
+```typescript
+// src/utils/errors.ts
+export class AppError extends Error {
+  constructor(
+    public message: string,
+    public statusCode: number = 500,
+    public code?: string
+  ) {
+    super(message)
+    this.name = 'AppError'
+    Error.captureStackTrace(this, this.constructor)
+  }
+}
+
+export class NotFoundError extends AppError {
+  constructor(resource: string) {
+    super(`${resource} not found`, 404, 'NOT_FOUND')
+  }
+}
+
+export class ValidationError extends AppError {
+  constructor(message: string) {
+    super(message, 400, 'VALIDATION_ERROR')
+  }
+}
+```
+
+### Error Handler Middleware
+
+```typescript
+// src/middleware/errorHandler.ts
+import { Request, Response, NextFunction } from 'express'
+import { AppError } from '../utils/errors'
+import { ZodError } from 'zod'
+
+export function errorHandler(
+  err: Error,
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  console.error(err)
+
+  // Known application errors
+  if (err instanceof AppError) {
+    return res.status(err.statusCode).json({
+      error: {
+        message: err.message,
+        code: err.code,
+      },
+    })
+  }
+
+  // Zod validation errors
+  if (err instanceof ZodError) {
+    return res.status(400).json({
+      error: {
+        message: 'Validation failed',
+        code: 'VALIDATION_ERROR',
+        details: err.errors,
+      },
+    })
+  }
+
+  // Unknown errors
+  res.status(500).json({
+    error: {
+      message: 'Internal server error',
+      code: 'INTERNAL_ERROR',
+    },
+  })
+}
+```
+
+---
+
+## Validation with Zod
+
+### Schema Definition
+
+```typescript
+// src/schemas/user.ts
+import { z } from 'zod'
+
+export const createUserSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+    name: z.string().min(1).max(100),
+    password: z.string().min(8),
+  }),
+})
+
+export const updateUserSchema = z.object({
+  body: z.object({
+    email: z.string().email().optional(),
+    name: z.string().min(1).max(100).optional(),
+  }),
+  params: z.object({
+    id: z.string().uuid(),
+  }),
+})
+
+export type CreateUserInput = z.infer<typeof createUserSchema>['body']
+```
+
+### Validation Middleware
+
+```typescript
+// src/middleware/validate.ts
+import { Request, Response, NextFunction } from 'express'
+import { AnyZodObject } from 'zod'
+
+export const validate = (schema: AnyZodObject) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await schema.parseAsync({
+        body: req.body,
+        query: req.query,
+        params: req.params,
+      })
+      next()
+    } catch (error) {
+      next(error)
+    }
+  }
+}
+```
+
+---
+
+## Authentication
+
+### JWT Middleware
+
+```typescript
+// src/middleware/auth.ts
+import { Request, Response, NextFunction } from 'express'
+import jwt from 'jsonwebtoken'
+import { AppError } from '../utils/errors'
+import { config } from '../config'
+
+interface JwtPayload {
+  userId: string
+}
+
+declare global {
+  namespace Express {
+    interface Request {
+      userId?: string
+    }
+  }
+}
+
+export async function authenticate(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const authHeader = req.headers.authorization
+    
+    if (!authHeader?.startsWith('Bearer ')) {
+      throw new AppError('No token provided', 401)
+    }
+
+    const token = authHeader.split(' ')[1]
+    const payload = jwt.verify(token, config.jwtSecret) as JwtPayload
+    
+    req.userId = payload.userId
+    next()
+  } catch (error) {
+    if (error instanceof jwt.JsonWebTokenError) {
+      next(new AppError('Invalid token', 401))
+    } else {
+      next(error)
+    }
+  }
+}
+```
+
+---
+
+## Async Patterns
+
+### Async Handler Wrapper
+
+```typescript
+// Automatically catches async errors
+type AsyncHandler = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => Promise<void>
+
+export const asyncHandler = (fn: AsyncHandler) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    Promise.resolve(fn(req, res, next)).catch(next)
+  }
+}
+
+// Usage
+router.get('/', asyncHandler(async (req, res) => {
+  const users = await userService.findAll()
+  res.json(users)
+}))
+```
+
+### Parallel Operations
+
+```typescript
+// ✅ Parallel - faster
+const [users, posts] = await Promise.all([
+  userService.findAll(),
+  postService.findAll(),
+])
+
+// ❌ Sequential - slower
+const users = await userService.findAll()
+const posts = await postService.findAll()
+```
+
+---
+
+## Configuration
+
+```typescript
+// src/config/index.ts
+import { z } from 'zod'
+
+const envSchema = z.object({
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  PORT: z.string().transform(Number).default('3000'),
+  DATABASE_URL: z.string(),
+  JWT_SECRET: z.string().min(32),
+  CORS_ORIGIN: z.string().default('http://localhost:3000'),
+})
+
+const parsed = envSchema.safeParse(process.env)
+
+if (!parsed.success) {
+  console.error('Invalid environment variables:', parsed.error.format())
+  process.exit(1)
+}
+
+export const config = {
+  env: parsed.data.NODE_ENV,
+  port: parsed.data.PORT,
+  databaseUrl: parsed.data.DATABASE_URL,
+  jwtSecret: parsed.data.JWT_SECRET,
+  corsOrigin: parsed.data.CORS_ORIGIN,
+}
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Not handling async errors | Use error handler middleware |
+| Blocking the event loop | Use async operations |
+| No input validation | Use Zod for all inputs |
+| Hardcoded config | Use environment variables |
+| No graceful shutdown | Handle SIGTERM/SIGINT |
+| Sync file operations | Use async fs methods |

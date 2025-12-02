@@ -1,0 +1,353 @@
+---
+description: Vitest best practices for unit testing React/Vue/TypeScript applications
+globs: ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "tests/**/*"]
+alwaysApply: false
+---
+
+# Vitest Best Practices
+
+## Overview
+
+| Aspect | Recommendation |
+|--------|----------------|
+| Runner | Vitest |
+| UI Testing | @testing-library/react |
+| Mocking | vi.mock, vi.fn |
+| Coverage | c8 or istanbul |
+
+---
+
+## Configuration
+
+### vitest.config.ts
+
+```typescript
+import { defineConfig } from 'vitest/config'
+import react from '@vitejs/plugin-react'
+import path from 'path'
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: ['./tests/setup.ts'],
+    include: ['**/*.{test,spec}.{ts,tsx}'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'html'],
+      exclude: ['node_modules/', 'tests/setup.ts'],
+    },
+  },
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
+})
+```
+
+### Test Setup
+
+```typescript
+// tests/setup.ts
+import '@testing-library/jest-dom'
+import { cleanup } from '@testing-library/react'
+import { afterEach, vi } from 'vitest'
+
+// Cleanup after each test
+afterEach(() => {
+  cleanup()
+})
+
+// Mock window.matchMedia
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  value: vi.fn().mockImplementation((query) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })),
+})
+```
+
+---
+
+## Test Structure
+
+### Basic Test File
+
+```typescript
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+
+describe('MyFunction', () => {
+  beforeEach(() => {
+    // Setup before each test
+  })
+
+  it('should do something', () => {
+    const result = myFunction(input)
+    expect(result).toBe(expectedOutput)
+  })
+
+  it('should handle edge case', () => {
+    expect(() => myFunction(null)).toThrow('Invalid input')
+  })
+})
+```
+
+### Component Testing
+
+```typescript
+import { describe, it, expect } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { Button } from '@/components/Button'
+
+describe('Button', () => {
+  it('renders with text', () => {
+    render(<Button>Click me</Button>)
+    expect(screen.getByRole('button', { name: 'Click me' })).toBeInTheDocument()
+  })
+
+  it('calls onClick when clicked', async () => {
+    const user = userEvent.setup()
+    const handleClick = vi.fn()
+    
+    render(<Button onClick={handleClick}>Click me</Button>)
+    await user.click(screen.getByRole('button'))
+    
+    expect(handleClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('is disabled when disabled prop is true', () => {
+    render(<Button disabled>Click me</Button>)
+    expect(screen.getByRole('button')).toBeDisabled()
+  })
+})
+```
+
+---
+
+## Mocking
+
+### Mock Functions
+
+```typescript
+import { vi } from 'vitest'
+
+// Create mock function
+const mockFn = vi.fn()
+
+// Mock with implementation
+const mockFn = vi.fn(() => 'mocked value')
+
+// Mock with return value
+const mockFn = vi.fn().mockReturnValue('value')
+
+// Mock async function
+const mockAsync = vi.fn().mockResolvedValue({ data: 'value' })
+
+// Check calls
+expect(mockFn).toHaveBeenCalled()
+expect(mockFn).toHaveBeenCalledWith('arg1', 'arg2')
+expect(mockFn).toHaveBeenCalledTimes(2)
+```
+
+### Mock Modules
+
+```typescript
+import { vi, describe, it, expect } from 'vitest'
+import { fetchUser } from '@/services/user'
+
+// Mock entire module
+vi.mock('@/services/user', () => ({
+  fetchUser: vi.fn(),
+}))
+
+describe('UserComponent', () => {
+  it('displays user data', async () => {
+    vi.mocked(fetchUser).mockResolvedValue({
+      id: 1,
+      name: 'John',
+    })
+    
+    // Test component that uses fetchUser
+  })
+})
+```
+
+### Mock API Calls
+
+```typescript
+import { vi } from 'vitest'
+
+// Mock fetch
+global.fetch = vi.fn()
+
+beforeEach(() => {
+  vi.mocked(fetch).mockResolvedValue({
+    ok: true,
+    json: () => Promise.resolve({ data: 'value' }),
+  } as Response)
+})
+
+// Or use MSW for more realistic mocking
+```
+
+---
+
+## Async Testing
+
+### Async Functions
+
+```typescript
+import { describe, it, expect } from 'vitest'
+
+describe('async operations', () => {
+  it('resolves with data', async () => {
+    const result = await fetchData()
+    expect(result).toEqual({ id: 1 })
+  })
+
+  it('rejects with error', async () => {
+    await expect(failingFunction()).rejects.toThrow('Error message')
+  })
+})
+```
+
+### Waiting for Elements
+
+```typescript
+import { render, screen, waitFor } from '@testing-library/react'
+
+it('loads data and displays it', async () => {
+  render(<DataComponent />)
+  
+  // Wait for element to appear
+  expect(await screen.findByText('Loaded data')).toBeInTheDocument()
+  
+  // Or use waitFor for more control
+  await waitFor(() => {
+    expect(screen.getByText('Loaded data')).toBeInTheDocument()
+  })
+})
+```
+
+---
+
+## Testing Hooks
+
+```typescript
+import { renderHook, act } from '@testing-library/react'
+import { useCounter } from '@/hooks/useCounter'
+
+describe('useCounter', () => {
+  it('increments counter', () => {
+    const { result } = renderHook(() => useCounter())
+    
+    expect(result.current.count).toBe(0)
+    
+    act(() => {
+      result.current.increment()
+    })
+    
+    expect(result.current.count).toBe(1)
+  })
+
+  it('accepts initial value', () => {
+    const { result } = renderHook(() => useCounter(10))
+    expect(result.current.count).toBe(10)
+  })
+})
+```
+
+---
+
+## Testing with Context
+
+```typescript
+import { render, screen } from '@testing-library/react'
+import { ThemeProvider } from '@/context/theme'
+import { ThemedButton } from '@/components/ThemedButton'
+
+const renderWithProviders = (ui: React.ReactElement) => {
+  return render(
+    <ThemeProvider>
+      {ui}
+    </ThemeProvider>
+  )
+}
+
+describe('ThemedButton', () => {
+  it('uses theme from context', () => {
+    renderWithProviders(<ThemedButton>Click</ThemedButton>)
+    // Test themed behavior
+  })
+})
+```
+
+---
+
+## Snapshot Testing
+
+```typescript
+import { render } from '@testing-library/react'
+import { expect, it } from 'vitest'
+import { Card } from '@/components/Card'
+
+it('matches snapshot', () => {
+  const { container } = render(
+    <Card title="Test" description="Description" />
+  )
+  expect(container).toMatchSnapshot()
+})
+
+// Inline snapshot
+it('renders title', () => {
+  const { container } = render(<Card title="Test" />)
+  expect(container.innerHTML).toMatchInlineSnapshot(`"<div>Test</div>"`)
+})
+```
+
+---
+
+## Commands
+
+```bash
+# Run tests
+npm test
+
+# Run with coverage
+npm test -- --coverage
+
+# Run specific file
+npm test -- src/components/Button.test.tsx
+
+# Watch mode
+npm test -- --watch
+
+# Update snapshots
+npm test -- -u
+
+# Run tests matching pattern
+npm test -- -t "Button"
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Testing implementation details | Test behavior, not implementation |
+| Not using userEvent | Use `userEvent` over `fireEvent` |
+| Forgetting cleanup | Use setup file with `afterEach(cleanup)` |
+| Hardcoded timeouts | Use `waitFor` and `findBy` queries |
+| Testing framework code | Only test your code, not React/library code |
+| Not mocking external calls | Mock API calls and external dependencies |

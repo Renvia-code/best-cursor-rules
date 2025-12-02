@@ -1,0 +1,81 @@
+---
+description: Core project overview for best-cursor-rules repository
+globs: []
+alwaysApply: true
+---
+
+# Best Cursor Rules - Project Core
+
+## Critical Rules
+
+**NO UNNECESSARY FILES** - Don't create files outside the defined structure.
+
+**FOLLOW MDC FORMAT** - All rules must use proper frontmatter (see 01-rule-format.mdc).
+
+**Current Date**: December 2025
+
+---
+
+## Overview
+
+**Purpose**: Comprehensive collection of Cursor AI rules for developers
+**Format**: MDC files with frontmatter metadata
+**License**: CC0 (Public Domain)
+**Maintainer**: Renvia Technologies (community-focused)
+
+---
+
+## Project Structure
+
+```
+best-cursor-rules/
+├── .github/assets/        # Logos for README (not for users)
+├── .cursor/rules/         # THIS repo's own rules
+├── rules/
+│   ├── frameworks/        # Next.js, React, Vue, Svelte, etc.
+│   ├── languages/         # TypeScript, Python, Go, Rust
+│   ├── backends/          # Supabase, FastAPI, Node.js
+│   ├── mobile/            # React Native, Flutter, SwiftUI
+│   ├── styling/           # Tailwind, shadcn/ui
+│   ├── testing/           # Vitest, Playwright, Jest
+│   ├── best-practices/    # Clean code, security, a11y
+│   └── stacks/            # Combined presets (T3, etc.)
+├── SETUP-WIZARD.md        # Master prompt for users
+├── README.md
+├── CONTRIBUTING.md
+└── LICENSE
+```
+
+---
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `SETUP-WIZARD.md` | Master prompt users paste into Cursor |
+| `README.md` | Project documentation |
+| `CONTRIBUTING.md` | How to add/edit rules |
+| `rules/**/*.mdc` | Individual cursor rules |
+
+---
+
+## Naming Conventions
+
+### Rule Files
+- Use lowercase with hyphens: `nextjs-15.mdc`, `react-native.mdc`
+- Include version only for major versions: `nextjs-15.mdc` not `nextjs-15.1.0.mdc`
+- Keep names short but clear
+
+### Directories
+- Lowercase, plural: `frameworks/`, `backends/`
+- No version numbers in directories
+
+---
+
+## Core Principles
+
+1. **Quality over Quantity** - Each rule should be well-tested and useful
+2. **Current Versions** - Rules should target 2025 framework versions
+3. **Practical Examples** - Include real code examples, not just theory
+4. **User-Friendly** - Rules should help, not overwhelm
+5. **No AI Slop** - Write like a human, avoid corporate/AI clichés

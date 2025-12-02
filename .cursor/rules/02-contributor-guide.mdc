@@ -1,0 +1,161 @@
+---
+description: Guidelines for contributing new rules or editing existing ones
+globs: []
+alwaysApply: false
+---
+
+# Contributor Guide
+
+## Quick Start
+
+1. Find the right category in `rules/`
+2. Create or edit an `.mdc` file
+3. Follow the format in `01-rule-format.mdc`
+4. Test the rule in a real project
+5. Submit PR
+
+---
+
+## Adding a New Rule
+
+### Step 1: Check if it exists
+
+```bash
+# Search existing rules
+ls rules/**/*.mdc | grep -i "your-topic"
+```
+
+### Step 2: Choose the right category
+
+| Category | What belongs here |
+|----------|-------------------|
+| `frameworks/` | React, Next.js, Vue, Svelte, Angular, Astro |
+| `languages/` | TypeScript, Python, Go, Rust, etc. |
+| `backends/` | Supabase, FastAPI, Express, Django |
+| `mobile/` | React Native, Flutter, SwiftUI |
+| `styling/` | Tailwind, CSS modules, shadcn/ui |
+| `testing/` | Vitest, Jest, Playwright, Cypress |
+| `best-practices/` | Clean code, security, accessibility |
+| `stacks/` | Combined presets (T3, LAMP, etc.) |
+
+### Step 3: Create the file
+
+```bash
+# Example: Adding a new framework rule
+touch rules/frameworks/remix.mdc
+```
+
+### Step 4: Write the rule
+
+Follow the template:
+
+```markdown
+---
+description: [What this rule helps with - 1-2 sentences]
+globs: ["**/*.tsx", "**/*.ts"]
+alwaysApply: false
+---
+
+# [Framework/Topic Name]
+
+## Overview
+[Brief intro - what, why, when]
+
+## Key Patterns
+[The most important stuff first]
+
+## Examples
+[Real code examples]
+
+## Common Mistakes
+[What to avoid]
+```
+
+---
+
+## Editing Existing Rules
+
+### When to edit
+
+✅ Outdated information (old API, deprecated patterns)
+✅ Missing important patterns
+✅ Incorrect examples
+✅ Typos or unclear language
+
+### When NOT to edit
+
+❌ Personal preference changes
+❌ Adding niche edge cases
+❌ Restructuring without clear benefit
+
+---
+
+## Quality Standards
+
+### Must Have
+
+- [ ] Valid MDC frontmatter
+- [ ] Clear, tested code examples
+- [ ] Current for 2025 (latest stable versions)
+- [ ] Under 500 lines
+- [ ] No duplicate content from other rules
+
+### Nice to Have
+
+- [ ] Tables for quick reference
+- [ ] ✅/❌ do/don't examples
+- [ ] Links to official docs
+- [ ] Common gotchas section
+
+---
+
+## Writing Style
+
+### DO write like this
+
+```markdown
+Use Server Components by default. Only add 'use client' when you need 
+browser APIs or interactivity.
+```
+
+### DON'T write like this
+
+```markdown
+It is recommended that developers consider utilizing Server Components 
+as the default paradigm for their applications, and only transition to 
+Client Components when necessitated by requirements for browser-specific 
+APIs or interactive user interface elements.
+```
+
+### Key principles
+
+- **Direct** - Get to the point
+- **Practical** - Real examples, not theory
+- **Scannable** - Headers, bullets, tables
+- **Current** - 2025 best practices
+- **Human** - Write like you're helping a friend
+
+---
+
+## Testing Your Rule
+
+Before submitting:
+
+1. Copy the rule to a test project's `.cursor/rules/`
+2. Open files that match the globs
+3. Ask Cursor to help with something related
+4. Verify it follows your rule's guidance
+5. Check edge cases
+
+---
+
+## PR Checklist
+
+```markdown
+- [ ] Rule follows MDC format
+- [ ] Code examples are tested
+- [ ] No duplicate content
+- [ ] Under 500 lines
+- [ ] Targets 2025 versions
+- [ ] Writing is clear and direct
+```

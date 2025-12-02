@@ -1,0 +1,338 @@
+---
+description: React 19 patterns including new hooks, Server Components, and modern best practices
+globs: ["**/*.tsx", "**/*.jsx", "src/components/**/*"]
+alwaysApply: false
+---
+
+# React 19 Best Practices
+
+## Overview
+
+| Feature | Status |
+|---------|--------|
+| Server Components | Stable |
+| useActionState | New (replaces useFormState) |
+| useFormStatus | Enhanced |
+| use() hook | New |
+| Ref as prop | No forwardRef needed |
+| Document Metadata | Native support |
+
+---
+
+## Component Patterns
+
+### ✅ DO: Use function components with TypeScript
+
+```tsx
+interface UserCardProps {
+  name: string
+  email: string
+  onEdit?: () => void
+}
+
+export function UserCard({ name, email, onEdit }: UserCardProps) {
+  return (
+    <div className="card">
+      <h3>{name}</h3>
+      <p>{email}</p>
+      {onEdit && <button onClick={onEdit}>Edit</button>}
+    </div>
+  )
+}
+```
+
+### ✅ DO: Use early returns
+
+```tsx
+export function UserProfile({ user }: { user: User | null }) {
+  if (!user) return null
+  if (user.banned) return <BannedMessage />
+  
+  return <ProfileCard user={user} />
+}
+```
+
+### ❌ DON'T: Nested conditionals in JSX
+
+```tsx
+// Bad
+return (
+  <div>
+    {user && user.name && user.isActive && (
+      <span>{user.name}</span>
+    )}
+  </div>
+)
+
+// Good
+if (!user?.name || !user.isActive) return null
+return <span>{user.name}</span>
+```
+
+---
+
+## Hooks Best Practices
+
+### useState
+
+```tsx
+// ✅ Simple state
+const [count, setCount] = useState(0)
+
+// ✅ Functional updates for derived state
+setCount(prev => prev + 1)
+
+// ✅ Lazy initialization for expensive defaults
+const [data, setData] = useState(() => computeExpensiveDefault())
+```
+
+### useEffect
+
+```tsx
+// ✅ Cleanup subscriptions
+useEffect(() => {
+  const subscription = api.subscribe(handler)
+  return () => subscription.unsubscribe()
+}, [handler])
+
+// ✅ Dependency array should include all used values
+useEffect(() => {
+  fetchUser(userId)
+}, [userId])  // userId is used, so include it
+```
+
+### useMemo and useCallback
+
+```tsx
+// ✅ Memoize expensive calculations
+const sortedItems = useMemo(
+  () => items.sort((a, b) => a.name.localeCompare(b.name)),
+  [items]
+)
+
+// ✅ Memoize callbacks passed to children
+const handleClick = useCallback(() => {
+  doSomething(id)
+}, [id])
+```
+
+---
+
+## React 19 New Features
+
+### useActionState (replaces useFormState)
+
+```tsx
+'use client'
+import { useActionState } from 'react'
+
+async function submitForm(prevState: State, formData: FormData) {
+  const email = formData.get('email')
+  // Process and return new state
+  return { success: true, email }
+}
+
+export function SignupForm() {
+  const [state, formAction, isPending] = useActionState(submitForm, null)
+  
+  return (
+    <form action={formAction}>
+      <input name="email" type="email" disabled={isPending} />
+      <button disabled={isPending}>
+        {isPending ? 'Submitting...' : 'Sign Up'}
+      </button>
+      {state?.success && <p>Welcome, {state.email}!</p>}
+    </form>
+  )
+}
+```
+
+### useFormStatus
+
+```tsx
+'use client'
+import { useFormStatus } from 'react-dom'
+
+// Must be used in a child component of the form
+function SubmitButton() {
+  const { pending, data, method } = useFormStatus()
+  
+  return (
+    <button disabled={pending} type="submit">
+      {pending ? 'Sending...' : 'Submit'}
+    </button>
+  )
+}
+
+export function ContactForm() {
+  return (
+    <form action={submitAction}>
+      <input name="message" />
+      <SubmitButton />  {/* useFormStatus works here */}
+    </form>
+  )
+}
+```
+
+### use() Hook for Promises
+
+```tsx
+import { use, Suspense } from 'react'
+
+function UserProfile({ userPromise }: { userPromise: Promise<User> }) {
+  const user = use(userPromise)  // Suspends until resolved
+  return <div>{user.name}</div>
+}
+
+// Usage
+<Suspense fallback={<Loading />}>
+  <UserProfile userPromise={fetchUser(id)} />
+</Suspense>
+```
+
+### Ref as Prop (No forwardRef)
+
+```tsx
+// React 19 - ref is just a prop
+function Input({ ref, ...props }: { ref?: React.Ref<HTMLInputElement> }) {
+  return <input ref={ref} {...props} />
+}
+
+// Usage
+function Form() {
+  const inputRef = useRef<HTMLInputElement>(null)
+  return <Input ref={inputRef} />
+}
+```
+
+---
+
+## State Management Patterns
+
+### Lift State Up
+
+```tsx
+// Parent manages shared state
+function TodoApp() {
+  const [todos, setTodos] = useState<Todo[]>([])
+  
+  const addTodo = (text: string) => {
+    setTodos(prev => [...prev, { id: Date.now(), text, done: false }])
+  }
+  
+  return (
+    <>
+      <TodoInput onAdd={addTodo} />
+      <TodoList todos={todos} onToggle={toggleTodo} />
+    </>
+  )
+}
+```
+
+### Context for Global State
+
+```tsx
+const ThemeContext = createContext<Theme>('light')
+
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [theme, setTheme] = useState<Theme>('light')
+  
+  return (
+    <ThemeContext.Provider value={{ theme, setTheme }}>
+      {children}
+    </ThemeContext.Provider>
+  )
+}
+
+export function useTheme() {
+  const context = useContext(ThemeContext)
+  if (!context) throw new Error('useTheme must be within ThemeProvider')
+  return context
+}
+```
+
+---
+
+## Performance
+
+### React.memo for Expensive Components
+
+```tsx
+const ExpensiveList = memo(function ExpensiveList({ items }: Props) {
+  return (
+    <ul>
+      {items.map(item => (
+        <li key={item.id}>{item.name}</li>
+      ))}
+    </ul>
+  )
+})
+```
+
+### Virtualization for Long Lists
+
+```tsx
+// Use react-window or @tanstack/virtual for long lists
+import { FixedSizeList } from 'react-window'
+
+function VirtualList({ items }: { items: Item[] }) {
+  return (
+    <FixedSizeList
+      height={400}
+      width="100%"
+      itemCount={items.length}
+      itemSize={50}
+    >
+      {({ index, style }) => (
+        <div style={style}>{items[index].name}</div>
+      )}
+    </FixedSizeList>
+  )
+}
+```
+
+---
+
+## Error Boundaries
+
+```tsx
+'use client'
+import { Component, ReactNode } from 'react'
+
+interface Props {
+  children: ReactNode
+  fallback: ReactNode
+}
+
+interface State {
+  hasError: boolean
+}
+
+class ErrorBoundary extends Component<Props, State> {
+  state = { hasError: false }
+  
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+  
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback
+    }
+    return this.props.children
+  }
+}
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| useFormStatus in same component as form | Move to child component |
+| Missing dependency in useEffect | Add all dependencies |
+| Creating objects/arrays in render | Move outside or useMemo |
+| Mutating state directly | Always create new objects |
+| useEffect for data fetching | Use Server Components or React Query |
+| Prop drilling through many levels | Use Context or state library |

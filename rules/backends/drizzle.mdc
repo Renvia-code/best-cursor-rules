@@ -1,0 +1,415 @@
+---
+description: Drizzle ORM best practices for type-safe SQL queries
+globs: ["**/*.ts", "**/*.tsx", "drizzle/**/*", "db/**/*"]
+alwaysApply: false
+---
+
+# Drizzle ORM Best Practices
+
+## Overview
+
+| Aspect | Recommendation |
+|--------|----------------|
+| Version | Drizzle ORM latest |
+| Database | PostgreSQL, MySQL, SQLite |
+| Type Safety | Full TypeScript inference |
+| Migrations | Drizzle Kit |
+
+---
+
+## Project Structure
+
+```
+src/
+├── db/
+│   ├── index.ts           # Database client
+│   ├── schema/
+│   │   ├── index.ts       # Export all schemas
+│   │   ├── users.ts
+│   │   └── posts.ts
+│   └── migrations/        # Generated migrations
+├── drizzle.config.ts
+└── ...
+```
+
+---
+
+## Schema Definition
+
+### Basic Schema
+
+```typescript
+// db/schema/users.ts
+import { pgTable, text, timestamp, boolean, pgEnum } from 'drizzle-orm/pg-core'
+import { createId } from '@paralleldrive/cuid2'
+
+export const roleEnum = pgEnum('role', ['user', 'admin'])
+
+export const users = pgTable('users', {
+  id: text('id').primaryKey().$defaultFn(() => createId()),
+  email: text('email').notNull().unique(),
+  name: text('name'),
+  passwordHash: text('password_hash').notNull(),
+  role: roleEnum('role').default('user').notNull(),
+  emailVerified: boolean('email_verified').default(false),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+export type User = typeof users.$inferSelect
+export type NewUser = typeof users.$inferInsert
+```
+
+```typescript
+// db/schema/posts.ts
+import { pgTable, text, timestamp, boolean, index } from 'drizzle-orm/pg-core'
+import { createId } from '@paralleldrive/cuid2'
+import { relations } from 'drizzle-orm'
+import { users } from './users'
+
+export const posts = pgTable('posts', {
+  id: text('id').primaryKey().$defaultFn(() => createId()),
+  title: text('title').notNull(),
+  content: text('content'),
+  published: boolean('published').default(false).notNull(),
+  authorId: text('author_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => ({
+  authorIdx: index('posts_author_idx').on(table.authorId),
+}))
+
+export const postsRelations = relations(posts, ({ one }) => ({
+  author: one(users, {
+    fields: [posts.authorId],
+    references: [users.id],
+  }),
+}))
+
+export const usersRelations = relations(users, ({ many }) => ({
+  posts: many(posts),
+}))
+
+export type Post = typeof posts.$inferSelect
+export type NewPost = typeof posts.$inferInsert
+```
+
+### Schema Export
+
+```typescript
+// db/schema/index.ts
+export * from './users'
+export * from './posts'
+```
+
+---
+
+## Database Client
+
+```typescript
+// db/index.ts
+import { drizzle } from 'drizzle-orm/postgres-js'
+import postgres from 'postgres'
+import * as schema from './schema'
+
+const connectionString = process.env.DATABASE_URL!
+
+// For queries
+const queryClient = postgres(connectionString)
+export const db = drizzle(queryClient, { schema })
+
+// For migrations (use different client)
+const migrationClient = postgres(connectionString, { max: 1 })
+export const migrationDb = drizzle(migrationClient)
+```
+
+---
+
+## Query Patterns
+
+### Basic CRUD
+
+```typescript
+import { db } from '@/db'
+import { users, posts, NewUser } from '@/db/schema'
+import { eq, and, desc, like, sql } from 'drizzle-orm'
+
+// Create
+async function createUser(data: NewUser) {
+  const [user] = await db.insert(users).values(data).returning()
+  return user
+}
+
+// Create many
+async function createUsers(data: NewUser[]) {
+  return db.insert(users).values(data).returning()
+}
+
+// Read one
+async function getUserById(id: string) {
+  return db.query.users.findFirst({
+    where: eq(users.id, id),
+  })
+}
+
+// Read many
+async function getUsers() {
+  return db.query.users.findMany({
+    orderBy: desc(users.createdAt),
+    limit: 10,
+  })
+}
+
+// Update
+async function updateUser(id: string, data: Partial<NewUser>) {
+  const [user] = await db
+    .update(users)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(users.id, id))
+    .returning()
+  return user
+}
+
+// Delete
+async function deleteUser(id: string) {
+  await db.delete(users).where(eq(users.id, id))
+}
+```
+
+### Relations and Joins
+
+```typescript
+// Using query API (relations required)
+const usersWithPosts = await db.query.users.findMany({
+  with: {
+    posts: {
+      where: eq(posts.published, true),
+      limit: 5,
+    },
+  },
+})
+
+// Manual join (no relations needed)
+const result = await db
+  .select({
+    user: users,
+    post: posts,
+  })
+  .from(users)
+  .leftJoin(posts, eq(users.id, posts.authorId))
+  .where(eq(posts.published, true))
+
+// Partial select with join
+const postAuthors = await db
+  .select({
+    postTitle: posts.title,
+    authorName: users.name,
+    authorEmail: users.email,
+  })
+  .from(posts)
+  .innerJoin(users, eq(posts.authorId, users.id))
+```
+
+### Filtering and Conditions
+
+```typescript
+import { eq, and, or, ne, gt, lt, gte, lte, like, ilike, inArray, isNull } from 'drizzle-orm'
+
+// Multiple conditions
+const activeAdmins = await db.query.users.findMany({
+  where: and(
+    eq(users.role, 'admin'),
+    eq(users.emailVerified, true)
+  ),
+})
+
+// OR condition
+const results = await db.query.users.findMany({
+  where: or(
+    eq(users.role, 'admin'),
+    gt(users.createdAt, new Date('2024-01-01'))
+  ),
+})
+
+// Search
+const searchResults = await db.query.users.findMany({
+  where: ilike(users.name, `%${searchTerm}%`),
+})
+
+// In array
+const specificUsers = await db.query.users.findMany({
+  where: inArray(users.id, ['id1', 'id2', 'id3']),
+})
+```
+
+### Aggregations
+
+```typescript
+import { count, sum, avg, min, max } from 'drizzle-orm'
+
+// Count
+const [{ count: totalUsers }] = await db
+  .select({ count: count() })
+  .from(users)
+
+// Group by with aggregation
+const postsByAuthor = await db
+  .select({
+    authorId: posts.authorId,
+    postCount: count(),
+  })
+  .from(posts)
+  .groupBy(posts.authorId)
+  .having(gt(count(), 5))
+
+// Multiple aggregations
+const stats = await db
+  .select({
+    total: count(),
+    avgViews: avg(posts.views),
+    maxViews: max(posts.views),
+  })
+  .from(posts)
+  .where(eq(posts.published, true))
+```
+
+### Transactions
+
+```typescript
+import { db } from '@/db'
+
+async function transferCredits(fromId: string, toId: string, amount: number) {
+  return db.transaction(async (tx) => {
+    const [fromUser] = await tx
+      .select()
+      .from(users)
+      .where(eq(users.id, fromId))
+      .for('update')
+
+    if (!fromUser || fromUser.credits < amount) {
+      throw new Error('Insufficient credits')
+    }
+
+    await tx
+      .update(users)
+      .set({ credits: sql`${users.credits} - ${amount}` })
+      .where(eq(users.id, fromId))
+
+    await tx
+      .update(users)
+      .set({ credits: sql`${users.credits} + ${amount}` })
+      .where(eq(users.id, toId))
+
+    return { success: true }
+  })
+}
+```
+
+---
+
+## Configuration
+
+```typescript
+// drizzle.config.ts
+import type { Config } from 'drizzle-kit'
+
+export default {
+  schema: './src/db/schema/index.ts',
+  out: './src/db/migrations',
+  dialect: 'postgresql',
+  dbCredentials: {
+    url: process.env.DATABASE_URL!,
+  },
+  verbose: true,
+  strict: true,
+} satisfies Config
+```
+
+---
+
+## Migrations
+
+```bash
+# Generate migration
+npx drizzle-kit generate
+
+# Apply migrations
+npx drizzle-kit migrate
+
+# Push schema directly (dev only)
+npx drizzle-kit push
+
+# Open Drizzle Studio
+npx drizzle-kit studio
+
+# Check for schema drift
+npx drizzle-kit check
+```
+
+---
+
+## Prepared Statements
+
+```typescript
+import { db } from '@/db'
+import { users } from '@/db/schema'
+import { eq, sql } from 'drizzle-orm'
+
+// Prepared statement for better performance
+const getUserByEmail = db.query.users
+  .findFirst({
+    where: eq(users.email, sql.placeholder('email')),
+  })
+  .prepare('get_user_by_email')
+
+// Usage
+const user = await getUserByEmail.execute({ email: 'user@example.com' })
+```
+
+---
+
+## Type Helpers
+
+```typescript
+import { InferSelectModel, InferInsertModel } from 'drizzle-orm'
+import { users, posts } from '@/db/schema'
+
+// Infer types from schema
+type User = InferSelectModel<typeof users>
+type NewUser = InferInsertModel<typeof users>
+type Post = InferSelectModel<typeof posts>
+
+// Partial update type
+type UserUpdate = Partial<Omit<NewUser, 'id' | 'createdAt'>>
+```
+
+---
+
+## Commands
+
+```bash
+# Development
+npx drizzle-kit studio     # Visual database browser
+npx drizzle-kit push       # Push schema changes
+
+# Production
+npx drizzle-kit generate   # Generate migration
+npx drizzle-kit migrate    # Run migrations
+
+# Utilities
+npx drizzle-kit check      # Check schema
+npx drizzle-kit drop       # Drop migration
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Missing relations export | Define and export relations |
+| No indexes on foreign keys | Add `index()` in table config |
+| Using raw sql without escape | Use `sql` template tag |
+| Not handling transactions | Use `db.transaction()` |
+| Missing `updatedAt` updates | Set in update operations |
+| Wrong client for migrations | Use separate migration client |

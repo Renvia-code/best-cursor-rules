@@ -1,0 +1,502 @@
+---
+description: Django + HTMX stack best practices for server-rendered interactive applications
+globs: ["**/*.py", "**/*.html", "templates/**/*", "**/views.py", "**/urls.py"]
+alwaysApply: false
+---
+
+# Django + HTMX Stack
+
+## Overview
+
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| Framework | Django 5 | Full-stack web framework |
+| Interactivity | HTMX | HTML-driven interactivity |
+| Styling | Tailwind CSS | Utility-first CSS |
+| Templates | Django Templates | Server-side rendering |
+| Database | PostgreSQL | Production database |
+
+**Related rules**: `python.mdc`, `tailwind.mdc`
+
+---
+
+## Project Structure
+
+```
+project/
+├── config/
+│   ├── __init__.py
+│   ├── settings.py
+│   ├── urls.py
+│   └── wsgi.py
+├── apps/
+│   ├── core/               # Shared utilities
+│   │   ├── templatetags/
+│   │   └── mixins.py
+│   ├── users/
+│   │   ├── models.py
+│   │   ├── views.py
+│   │   ├── urls.py
+│   │   └── forms.py
+│   └── posts/
+│       ├── models.py
+│       ├── views.py
+│       ├── urls.py
+│       └── forms.py
+├── templates/
+│   ├── base.html
+│   ├── components/         # Reusable partials
+│   │   ├── _button.html
+│   │   ├── _modal.html
+│   │   └── _toast.html
+│   ├── partials/           # HTMX response partials
+│   │   └── posts/
+│   │       ├── _list.html
+│   │       └── _item.html
+│   └── pages/
+│       └── posts/
+│           ├── list.html
+│           └── detail.html
+├── static/
+│   ├── css/
+│   └── js/
+└── manage.py
+```
+
+---
+
+## HTMX Setup
+
+### Base Template
+
+```html
+<!-- templates/base.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ title }}{% endblock %}</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    
+    <!-- CSRF Token for HTMX -->
+    <meta name="csrf-token" content="{{ csrf_token }}">
+</head>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+    {% include "components/_toast.html" %}
+    
+    <main class="container mx-auto px-4 py-8">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>
+```
+
+### HTMX Configuration
+
+```python
+# config/settings.py
+
+INSTALLED_APPS = [
+    # ...
+    'django_htmx',
+]
+
+MIDDLEWARE = [
+    # ...
+    'django_htmx.middleware.HtmxMiddleware',
+]
+```
+
+---
+
+## View Patterns
+
+### HTMX-Aware Views
+
+```python
+# apps/posts/views.py
+from django.shortcuts import render, get_object_or_404
+from django.views.generic import ListView, CreateView, UpdateView, DeleteView
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.http import HttpResponse
+
+from .models import Post
+from .forms import PostForm
+
+
+class PostListView(ListView):
+    model = Post
+    template_name = "pages/posts/list.html"
+    context_object_name = "posts"
+    paginate_by = 10
+
+    def get_template_names(self):
+        if self.request.htmx:
+            return ["partials/posts/_list.html"]
+        return [self.template_name]
+
+
+class PostCreateView(LoginRequiredMixin, CreateView):
+    model = Post
+    form_class = PostForm
+    template_name = "pages/posts/create.html"
+
+    def form_valid(self, form):
+        form.instance.author = self.request.user
+        self.object = form.save()
+        
+        if self.request.htmx:
+            return render(
+                self.request,
+                "partials/posts/_item.html",
+                {"post": self.object},
+                headers={
+                    "HX-Trigger": "postCreated",
+                    "HX-Reswap": "afterbegin",
+                },
+            )
+        return super().form_valid(form)
+
+    def form_invalid(self, form):
+        if self.request.htmx:
+            return render(
+                self.request,
+                "partials/posts/_form.html",
+                {"form": form},
+                status=422,
+            )
+        return super().form_invalid(form)
+
+
+class PostDeleteView(LoginRequiredMixin, DeleteView):
+    model = Post
+
+    def delete(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        
+        if self.object.author != request.user:
+            return HttpResponse(status=403)
+        
+        self.object.delete()
+        
+        if request.htmx:
+            return HttpResponse(
+                status=200,
+                headers={"HX-Trigger": "postDeleted"},
+            )
+        return super().delete(request, *args, **kwargs)
+```
+
+### Function-Based Views
+
+```python
+# apps/posts/views.py
+from django.contrib.auth.decorators import login_required
+from django.http import HttpResponse
+from django.shortcuts import render
+from django.views.decorators.http import require_POST
+
+
+@login_required
+@require_POST
+def toggle_like(request, post_id):
+    post = get_object_or_404(Post, id=post_id)
+    user = request.user
+
+    if user in post.likes.all():
+        post.likes.remove(user)
+        liked = False
+    else:
+        post.likes.add(user)
+        liked = True
+
+    return render(
+        request,
+        "partials/posts/_like_button.html",
+        {"post": post, "liked": liked},
+    )
+
+
+def search_posts(request):
+    query = request.GET.get("q", "")
+    posts = Post.objects.filter(title__icontains=query)[:10] if query else []
+
+    return render(
+        request,
+        "partials/posts/_search_results.html",
+        {"posts": posts, "query": query},
+    )
+```
+
+---
+
+## Template Patterns
+
+### List with Infinite Scroll
+
+```html
+<!-- templates/pages/posts/list.html -->
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto">
+    <h1 class="text-3xl font-bold mb-8">Posts</h1>
+    
+    <div id="post-list" class="space-y-4">
+        {% include "partials/posts/_list.html" %}
+    </div>
+    
+    {% if page_obj.has_next %}
+    <div 
+        hx-get="?page={{ page_obj.next_page_number }}"
+        hx-trigger="revealed"
+        hx-swap="afterend"
+        hx-target="#post-list"
+        class="flex justify-center py-8"
+    >
+        <span class="htmx-indicator">Loading more...</span>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+```
+
+### Post Item Partial
+
+```html
+<!-- templates/partials/posts/_item.html -->
+<article 
+    id="post-{{ post.id }}" 
+    class="bg-white rounded-lg shadow p-6"
+>
+    <h2 class="text-xl font-semibold">{{ post.title }}</h2>
+    <p class="text-gray-600 mt-2">{{ post.content|truncatewords:30 }}</p>
+    
+    <div class="flex items-center justify-between mt-4">
+        <span class="text-sm text-gray-500">
+            {{ post.author.name }} · {{ post.created_at|timesince }} ago
+        </span>
+        
+        <div class="flex gap-2">
+            <!-- Like Button -->
+            <button
+                hx-post="{% url 'posts:toggle_like' post.id %}"
+                hx-swap="outerHTML"
+                class="px-3 py-1 rounded-full text-sm
+                    {% if request.user in post.likes.all %}
+                        bg-red-100 text-red-600
+                    {% else %}
+                        bg-gray-100 text-gray-600
+                    {% endif %}
+                "
+            >
+                ♥ {{ post.likes.count }}
+            </button>
+            
+            <!-- Delete Button -->
+            {% if post.author == request.user %}
+            <button
+                hx-delete="{% url 'posts:delete' post.id %}"
+                hx-target="#post-{{ post.id }}"
+                hx-swap="outerHTML"
+                hx-confirm="Delete this post?"
+                class="px-3 py-1 rounded-full text-sm bg-red-100 text-red-600"
+            >
+                Delete
+            </button>
+            {% endif %}
+        </div>
+    </div>
+</article>
+```
+
+### Inline Create Form
+
+```html
+<!-- templates/partials/posts/_create_form.html -->
+<form
+    hx-post="{% url 'posts:create' %}"
+    hx-target="#post-list"
+    hx-swap="afterbegin"
+    hx-on::after-request="if(event.detail.successful) this.reset()"
+    class="bg-white rounded-lg shadow p-6 mb-8"
+>
+    {% csrf_token %}
+    
+    <div class="space-y-4">
+        <div>
+            <label class="block text-sm font-medium text-gray-700">Title</label>
+            <input 
+                type="text" 
+                name="title" 
+                required
+                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+            >
+        </div>
+        
+        <div>
+            <label class="block text-sm font-medium text-gray-700">Content</label>
+            <textarea 
+                name="content" 
+                rows="3"
+                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+            ></textarea>
+        </div>
+        
+        <button 
+            type="submit"
+            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+        >
+            <span class="htmx-indicator">Posting...</span>
+            <span class="not-htmx-indicator">Create Post</span>
+        </button>
+    </div>
+</form>
+```
+
+### Live Search
+
+```html
+<!-- templates/components/_search.html -->
+<div class="relative">
+    <input
+        type="search"
+        name="q"
+        placeholder="Search posts..."
+        hx-get="{% url 'posts:search' %}"
+        hx-trigger="input changed delay:300ms, search"
+        hx-target="#search-results"
+        hx-indicator="#search-spinner"
+        class="w-full px-4 py-2 rounded-lg border"
+    >
+    
+    <span id="search-spinner" class="htmx-indicator absolute right-3 top-2">
+        ⏳
+    </span>
+    
+    <div id="search-results" class="absolute w-full mt-1 bg-white rounded-lg shadow-lg z-10">
+        <!-- Results populated by HTMX -->
+    </div>
+</div>
+```
+
+---
+
+## Toast Notifications
+
+```html
+<!-- templates/components/_toast.html -->
+<div 
+    id="toast-container"
+    class="fixed top-4 right-4 z-50 space-y-2"
+    hx-on:postCreated="showToast('Post created!')"
+    hx-on:postDeleted="showToast('Post deleted')"
+></div>
+
+<template id="toast-template">
+    <div class="bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg animate-fade-in">
+        <span class="toast-message"></span>
+    </div>
+</template>
+
+<script>
+function showToast(message) {
+    const container = document.getElementById('toast-container');
+    const template = document.getElementById('toast-template');
+    const toast = template.content.cloneNode(true);
+    
+    toast.querySelector('.toast-message').textContent = message;
+    container.appendChild(toast);
+    
+    setTimeout(() => {
+        container.firstElementChild?.remove();
+    }, 3000);
+}
+</script>
+```
+
+---
+
+## URL Configuration
+
+```python
+# apps/posts/urls.py
+from django.urls import path
+from . import views
+
+app_name = "posts"
+
+urlpatterns = [
+    path("", views.PostListView.as_view(), name="list"),
+    path("create/", views.PostCreateView.as_view(), name="create"),
+    path("<int:pk>/delete/", views.PostDeleteView.as_view(), name="delete"),
+    path("<int:post_id>/like/", views.toggle_like, name="toggle_like"),
+    path("search/", views.search_posts, name="search"),
+]
+```
+
+---
+
+## HTMX Response Headers
+
+```python
+# apps/core/mixins.py
+from django.http import HttpResponse
+
+
+class HtmxResponseMixin:
+    """Mixin for common HTMX response patterns."""
+
+    def htmx_response(self, template, context=None, **headers):
+        """Render template with HTMX headers."""
+        from django.shortcuts import render
+        
+        response = render(self.request, template, context or {})
+        for key, value in headers.items():
+            response[f"HX-{key}"] = value
+        return response
+
+    def htmx_redirect(self, url):
+        """Client-side redirect via HTMX."""
+        return HttpResponse(headers={"HX-Redirect": url})
+
+    def htmx_refresh(self):
+        """Trigger full page refresh."""
+        return HttpResponse(headers={"HX-Refresh": "true"})
+```
+
+---
+
+## Commands
+
+```bash
+# Development
+python manage.py runserver
+python manage.py tailwind start    # If using django-tailwind
+
+# Database
+python manage.py makemigrations
+python manage.py migrate
+
+# Static files
+python manage.py collectstatic
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Missing CSRF token | Add `hx-headers` to body tag |
+| Full page in partial | Check `request.htmx` in views |
+| No loading indicators | Add `htmx-indicator` class |
+| Stale content | Use `hx-trigger` events |
+| Large partials | Keep partials small and focused |
+| No error handling | Return appropriate status codes |

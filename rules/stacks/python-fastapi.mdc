@@ -1,0 +1,498 @@
+---
+description: Python FastAPI stack best practices with PostgreSQL, SQLAlchemy, and Pydantic
+globs: ["**/*.py", "app/**/*", "alembic/**/*"]
+alwaysApply: false
+---
+
+# Python FastAPI Stack
+
+## Overview
+
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| Framework | FastAPI | Async web framework |
+| Database | PostgreSQL | Relational database |
+| ORM | SQLAlchemy 2.0 | Async ORM |
+| Validation | Pydantic v2 | Data validation |
+| Migrations | Alembic | Database migrations |
+| Auth | python-jose | JWT authentication |
+
+**Related rules**: `python.mdc`, `fastapi.mdc`
+
+---
+
+## Project Structure
+
+```
+app/
+├── api/
+│   ├── routes/
+│   │   ├── __init__.py
+│   │   ├── auth.py
+│   │   ├── users.py
+│   │   └── posts.py
+│   └── deps.py            # Dependencies
+├── core/
+│   ├── __init__.py
+│   ├── config.py          # Settings
+│   ├── security.py        # Auth utilities
+│   └── database.py        # DB connection
+├── models/
+│   ├── __init__.py
+│   ├── user.py
+│   └── post.py
+├── schemas/
+│   ├── __init__.py
+│   ├── user.py
+│   └── post.py
+├── services/
+│   ├── __init__.py
+│   └── user.py
+└── main.py
+alembic/
+├── versions/
+└── env.py
+tests/
+├── conftest.py
+└── test_users.py
+pyproject.toml
+```
+
+---
+
+## Application Setup
+
+### Main Application
+
+```python
+# app/main.py
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.routes import auth, users, posts
+from app.core.config import settings
+from app.core.database import engine, Base
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    # Shutdown
+    await engine.dispose()
+
+
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(users.router, prefix="/api/users", tags=["users"])
+app.include_router(posts.router, prefix="/api/posts", tags=["posts"])
+
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+```
+
+### Configuration
+
+```python
+# app/core/config.py
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    PROJECT_NAME: str = "FastAPI App"
+    DATABASE_URL: str
+    SECRET_KEY: str
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
+
+
+settings = Settings()
+```
+
+---
+
+## Database Setup
+
+### SQLAlchemy Configuration
+
+```python
+# app/core/database.py
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.orm import DeclarativeBase
+
+from app.core.config import settings
+
+
+engine = create_async_engine(
+    settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"),
+    echo=False,
+)
+
+AsyncSessionLocal = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
+```
+
+### Models
+
+```python
+# app/models/user.py
+from datetime import datetime
+from sqlalchemy import String, DateTime, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.core.database import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255))
+    name: Mapped[str] = mapped_column(String(100))
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    posts: Mapped[list["Post"]] = relationship(back_populates="author")
+```
+
+```python
+# app/models/post.py
+from datetime import datetime
+from sqlalchemy import String, Text, ForeignKey, DateTime, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.core.database import Base
+
+
+class Post(Base):
+    __tablename__ = "posts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    content: Mapped[str] = mapped_column(Text)
+    published: Mapped[bool] = mapped_column(default=False)
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    author: Mapped["User"] = relationship(back_populates="posts")
+```
+
+---
+
+## Pydantic Schemas
+
+```python
+# app/schemas/user.py
+from datetime import datetime
+from pydantic import BaseModel, EmailStr, ConfigDict
+
+
+class UserBase(BaseModel):
+    email: EmailStr
+    name: str
+
+
+class UserCreate(UserBase):
+    password: str
+
+
+class UserUpdate(BaseModel):
+    email: EmailStr | None = None
+    name: str | None = None
+
+
+class UserResponse(UserBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    is_active: bool
+    created_at: datetime
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class TokenData(BaseModel):
+    user_id: int | None = None
+```
+
+---
+
+## Authentication
+
+### Security Utilities
+
+```python
+# app/core/security.py
+from datetime import datetime, timedelta, timezone
+from passlib.context import CryptContext
+from jose import jwt, JWTError
+
+from app.core.config import settings
+
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + (
+        expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def decode_access_token(token: str) -> dict | None:
+    try:
+        return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except JWTError:
+        return None
+```
+
+### Dependencies
+
+```python
+# app/api/deps.py
+from typing import Annotated
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+from app.core.database import get_db
+from app.core.security import decode_access_token
+from app.models.user import User
+
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+
+async def get_current_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> User:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    payload = decode_access_token(token)
+    if payload is None:
+        raise credentials_exception
+
+    user_id = payload.get("sub")
+    if user_id is None:
+        raise credentials_exception
+
+    result = await db.execute(select(User).where(User.id == int(user_id)))
+    user = result.scalar_one_or_none()
+
+    if user is None:
+        raise credentials_exception
+
+    return user
+
+
+CurrentUser = Annotated[User, Depends(get_current_user)]
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+```
+
+---
+
+## API Routes
+
+### Auth Routes
+
+```python
+# app/api/routes/auth.py
+from typing import Annotated
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy import select
+
+from app.api.deps import DbSession
+from app.core.security import verify_password, get_password_hash, create_access_token
+from app.models.user import User
+from app.schemas.user import UserCreate, UserResponse, Token
+
+
+router = APIRouter()
+
+
+@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def register(user_in: UserCreate, db: DbSession):
+    result = await db.execute(select(User).where(User.email == user_in.email))
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
+
+    user = User(
+        email=user_in.email,
+        name=user_in.name,
+        hashed_password=get_password_hash(user_in.password),
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.post("/login", response_model=Token)
+async def login(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    db: DbSession,
+):
+    result = await db.execute(select(User).where(User.email == form_data.username))
+    user = result.scalar_one_or_none()
+
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+        )
+
+    access_token = create_access_token(data={"sub": str(user.id)})
+    return Token(access_token=access_token)
+```
+
+### CRUD Routes
+
+```python
+# app/api/routes/posts.py
+from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import select
+
+from app.api.deps import CurrentUser, DbSession
+from app.models.post import Post
+from app.schemas.post import PostCreate, PostResponse, PostUpdate
+
+
+router = APIRouter()
+
+
+@router.get("", response_model=list[PostResponse])
+async def get_posts(db: DbSession, skip: int = 0, limit: int = 20):
+    result = await db.execute(
+        select(Post).where(Post.published == True).offset(skip).limit(limit)
+    )
+    return result.scalars().all()
+
+
+@router.post("", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
+async def create_post(post_in: PostCreate, db: DbSession, user: CurrentUser):
+    post = Post(**post_in.model_dump(), author_id=user.id)
+    db.add(post)
+    await db.commit()
+    await db.refresh(post)
+    return post
+
+
+@router.delete("/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_post(post_id: int, db: DbSession, user: CurrentUser):
+    result = await db.execute(select(Post).where(Post.id == post_id))
+    post = result.scalar_one_or_none()
+
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    if post.author_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    await db.delete(post)
+    await db.commit()
+```
+
+---
+
+## Commands
+
+```bash
+# Development
+uvicorn app.main:app --reload
+
+# Database migrations
+alembic revision --autogenerate -m "description"
+alembic upgrade head
+alembic downgrade -1
+
+# Testing
+pytest
+pytest --cov=app
+
+# Type checking
+mypy app
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---------|-----|
+| Sync database calls | Use async SQLAlchemy with asyncpg |
+| No input validation | Pydantic validates automatically |
+| Passwords in responses | Exclude with `model_config` |
+| Missing async context | Use `async with` for sessions |
+| No dependency injection | Use `Depends()` for db/auth |
+| Hardcoded config | Use pydantic-settings |

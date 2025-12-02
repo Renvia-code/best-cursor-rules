@@ -1,0 +1,160 @@
+---
+description: MDC format specifications and frontmatter requirements for cursor rules
+globs: ["**/*.mdc"]
+alwaysApply: false
+---
+
+# Rule Format Specification
+
+## MDC File Structure
+
+Every rule file MUST have this structure:
+
+```markdown
+---
+description: Brief explanation of what this rule does
+globs: ["**/*.tsx", "**/*.ts"]
+alwaysApply: false
+---
+
+# Rule Title
+
+## Section 1
+Content...
+
+## Section 2
+Content...
+```
+
+---
+
+## Frontmatter Fields
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `description` | Yes | string | 1-2 sentence summary for AI to understand when to use |
+| `globs` | Yes | array | File patterns that trigger this rule (empty = manual) |
+| `alwaysApply` | No | boolean | If true, always included in context |
+
+### Globs Examples
+
+```yaml
+# TypeScript/React files
+globs: ["**/*.tsx", "**/*.ts"]
+
+# Python files
+globs: ["**/*.py"]
+
+# Specific directories
+globs: ["src/components/**/*", "src/hooks/**/*"]
+
+# Empty = manual activation only
+globs: []
+```
+
+---
+
+## Content Guidelines
+
+### DO
+
+```markdown
+✅ Use clear headings (##, ###)
+✅ Include practical code examples
+✅ Use tables for quick reference
+✅ Keep sections focused and scannable
+✅ Include ✅/❌ for do/don't patterns
+✅ Reference specific file paths when helpful
+```
+
+### DON'T
+
+```markdown
+❌ Write walls of text
+❌ Use vague language ("consider doing X")
+❌ Include outdated patterns
+❌ Repeat information from other rules
+❌ Use corporate/AI-slop language
+❌ Exceed 500 lines (split into multiple files)
+```
+
+---
+
+## Section Patterns
+
+### Pattern 1: Quick Reference Table
+
+```markdown
+## Overview
+
+| Aspect | Recommendation |
+|--------|----------------|
+| State | Use Zustand |
+| Styling | Tailwind CSS |
+| Forms | React Hook Form + Zod |
+```
+
+### Pattern 2: Do/Don't Examples
+
+```markdown
+## Component Patterns
+
+### ✅ DO: Use early returns
+
+```tsx
+function Component({ data }) {
+  if (!data) return null;
+  return <div>{data.name}</div>;
+}
+```
+
+### ❌ DON'T: Nested conditionals
+
+```tsx
+function Component({ data }) {
+  return (
+    <div>
+      {data && data.name && <span>{data.name}</span>}
+    </div>
+  );
+}
+```
+```
+
+### Pattern 3: Command Reference
+
+```markdown
+## Commands
+
+```bash
+npm run dev      # Start development server
+npm run build    # Production build
+npm run lint     # Check code quality
+```
+```
+
+---
+
+## File Naming
+
+| Category | Pattern | Example |
+|----------|---------|---------|
+| Frameworks | `{name}-{version}.mdc` | `nextjs-15.mdc` |
+| Languages | `{name}.mdc` | `typescript.mdc` |
+| Stacks | `{name}-stack.mdc` | `t3-stack.mdc` |
+| Practices | `{topic}.mdc` | `clean-code.mdc` |
+
+---
+
+## Quality Checklist
+
+Before submitting a rule, verify:
+
+- [ ] Frontmatter is valid YAML
+- [ ] Description is clear and concise
+- [ ] Globs target correct file types
+- [ ] Code examples are tested and work
+- [ ] No outdated patterns (check 2025 docs)
+- [ ] Under 500 lines
+- [ ] Follows existing style patterns
+- [ ] No AI-generated filler text

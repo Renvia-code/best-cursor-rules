@@ -1,0 +1,364 @@
+---
+description: Security best practices for authentication, data protection, and common vulnerabilities
+globs: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.py"]
+alwaysApply: false
+---
+
+# Security Best Practices
+
+## Overview
+
+| Area | Priority |
+|------|----------|
+| Authentication | Critical |
+| Authorization | Critical |
+| Input Validation | Critical |
+| Data Protection | High |
+| API Security | High |
+
+---
+
+## Authentication
+
+### Password Handling
+
+```typescript
+// ✅ Use bcrypt or argon2 for password hashing
+import bcrypt from 'bcrypt'
+
+const SALT_ROUNDS = 12
+
+async function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, SALT_ROUNDS)
+}
+
+async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  return bcrypt.compare(password, hash)
+}
+
+// ❌ Never store plain text passwords
+// ❌ Never use MD5 or SHA1 for passwords
+// ❌ Never log passwords
+```
+
+### JWT Tokens
+
+```typescript
+import jwt from 'jsonwebtoken'
+
+// ✅ Short-lived access tokens
+const ACCESS_TOKEN_EXPIRY = '15m'
+
+// ✅ Longer refresh tokens (stored securely)
+const REFRESH_TOKEN_EXPIRY = '7d'
+
+function generateAccessToken(userId: string): string {
+  return jwt.sign(
+    { sub: userId, type: 'access' },
+    process.env.JWT_SECRET!,
+    { expiresIn: ACCESS_TOKEN_EXPIRY }
+  )
+}
+
+// ✅ Always verify tokens
+function verifyToken(token: string): JwtPayload {
+  return jwt.verify(token, process.env.JWT_SECRET!) as JwtPayload
+}
+```
+
+### Session Security
+
+```typescript
+// ✅ Secure cookie settings
+const sessionConfig = {
+  httpOnly: true,    // Prevents XSS access to cookie
+  secure: true,      // HTTPS only (in production)
+  sameSite: 'strict', // Prevents CSRF
+  maxAge: 24 * 60 * 60 * 1000, // 24 hours
+}
+```
+
+---
+
+## Input Validation
+
+### Validate All Input
+
+```typescript
+import { z } from 'zod'
+
+// ✅ Define strict schemas
+const userSchema = z.object({
+  email: z.string().email().max(255),
+  password: z.string().min(8).max(100),
+  name: z.string().min(1).max(100).regex(/^[a-zA-Z\s]+$/),
+})
+
+// ✅ Validate before processing
+function createUser(input: unknown) {
+  const validated = userSchema.parse(input)
+  // Safe to use validated data
+}
+```
+
+### Prevent SQL Injection
+
+```typescript
+// ❌ Bad - SQL injection vulnerable
+const query = `SELECT * FROM users WHERE id = ${userId}`
+
+// ✅ Good - Parameterized query
+const query = 'SELECT * FROM users WHERE id = $1'
+await db.query(query, [userId])
+
+// ✅ Good - Using ORM (Prisma, Drizzle)
+await prisma.user.findUnique({ where: { id: userId } })
+```
+
+### Prevent XSS
+
+```typescript
+// ✅ React automatically escapes
+// This is safe - React escapes the value
+<div>{userInput}</div>
+
+// ❌ Dangerous - bypasses escaping
+<div dangerouslySetInnerHTML={{ __html: userInput }} />
+
+// ✅ If you must render HTML, sanitize first
+import DOMPurify from 'dompurify'
+<div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(userInput) }} />
+```
+
+---
+
+## Authorization
+
+### Server-Side Verification
+
+```typescript
+// ✅ Always verify on server - never trust client
+async function updatePost(req: Request) {
+  const user = await getAuthenticatedUser(req)
+  const post = await getPost(req.params.id)
+  
+  // ✅ Check ownership
+  if (post.authorId !== user.id) {
+    throw new ForbiddenError('Not authorized to edit this post')
+  }
+  
+  // Now safe to update
+}
+```
+
+### Row Level Security (RLS)
+
+```sql
+-- Supabase/PostgreSQL RLS
+ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
+
+-- Users can only access their own data
+CREATE POLICY "Users can view own posts"
+ON posts FOR SELECT
+USING (auth.uid() = user_id);
+
+-- Admin can access everything
+CREATE POLICY "Admin full access"
+ON posts FOR ALL
+USING (
+  EXISTS (
+    SELECT 1 FROM profiles
+    WHERE profiles.id = auth.uid()
+    AND profiles.role = 'admin'
+  )
+);
+```
+
+---
+
+## Environment Variables
+
+### Never Expose Secrets
+
+```typescript
+// ✅ Server-side only
+const apiKey = process.env.API_SECRET_KEY
+
+// ✅ For client-side (Next.js)
+// Only NEXT_PUBLIC_ prefixed vars are exposed
+const publicKey = process.env.NEXT_PUBLIC_STRIPE_KEY
+
+// ❌ Never commit secrets
+// ❌ Never log secrets
+console.log(process.env.API_KEY) // Bad!
+
+// ✅ Log existence, not value
+console.log('API Key configured:', !!process.env.API_KEY)
+```
+
+### .env File Security
+
+```bash
+# .gitignore - ALWAYS include
+.env
+.env.local
+.env.*.local
+
+# Never commit these files
+```
+
+---
+
+## API Security
+
+### Rate Limiting
+
+```typescript
+import rateLimit from 'express-rate-limit'
+
+// ✅ Limit requests
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // 100 requests per window
+  message: 'Too many requests, please try again later',
+})
+
+app.use('/api/', limiter)
+
+// ✅ Stricter limits for auth endpoints
+const authLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5, // 5 attempts
+  message: 'Too many login attempts',
+})
+
+app.use('/api/auth/login', authLimiter)
+```
+
+### CORS Configuration
+
+```typescript
+import cors from 'cors'
+
+// ✅ Restrict origins in production
+const corsOptions = {
+  origin: process.env.NODE_ENV === 'production'
+    ? ['https://myapp.com', 'https://www.myapp.com']
+    : true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+}
+
+app.use(cors(corsOptions))
+```
+
+### Security Headers
+
+```typescript
+import helmet from 'helmet'
+
+// ✅ Use helmet for security headers
+app.use(helmet())
+
+// This sets:
+// - Content-Security-Policy
+// - X-Content-Type-Options
+// - X-Frame-Options
+// - X-XSS-Protection
+// - Strict-Transport-Security
+```
+
+---
+
+## Data Protection
+
+### Encrypt Sensitive Data
+
+```typescript
+import crypto from 'crypto'
+
+const ALGORITHM = 'aes-256-gcm'
+const KEY = Buffer.from(process.env.ENCRYPTION_KEY!, 'hex')
+
+function encrypt(text: string): string {
+  const iv = crypto.randomBytes(16)
+  const cipher = crypto.createCipheriv(ALGORITHM, KEY, iv)
+  
+  let encrypted = cipher.update(text, 'utf8', 'hex')
+  encrypted += cipher.final('hex')
+  
+  const authTag = cipher.getAuthTag()
+  
+  return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted}`
+}
+```
+
+### Mask Sensitive Data in Logs
+
+```typescript
+function maskEmail(email: string): string {
+  const [name, domain] = email.split('@')
+  return `${name[0]}***@${domain}`
+}
+
+function maskCard(cardNumber: string): string {
+  return `****-****-****-${cardNumber.slice(-4)}`
+}
+
+// ✅ Use in logs
+console.log(`Processing order for ${maskEmail(user.email)}`)
+```
+
+---
+
+## Common Vulnerabilities
+
+### CSRF Protection
+
+```typescript
+// ✅ Use SameSite cookies
+// ✅ Verify Origin/Referer headers
+// ✅ Use CSRF tokens for forms
+
+import csrf from 'csurf'
+app.use(csrf({ cookie: true }))
+```
+
+### File Upload Security
+
+```typescript
+// ✅ Validate file type
+const allowedTypes = ['image/jpeg', 'image/png', 'image/webp']
+
+function validateUpload(file: File) {
+  if (!allowedTypes.includes(file.type)) {
+    throw new Error('Invalid file type')
+  }
+  
+  if (file.size > 5 * 1024 * 1024) { // 5MB
+    throw new Error('File too large')
+  }
+}
+
+// ✅ Store uploads outside web root
+// ✅ Use random filenames
+// ✅ Scan for malware if possible
+```
+
+---
+
+## Security Checklist
+
+| Check | Status |
+|-------|--------|
+| Passwords hashed with bcrypt/argon2 | ☐ |
+| JWT tokens short-lived | ☐ |
+| All input validated | ☐ |
+| Parameterized queries used | ☐ |
+| RLS enabled on database | ☐ |
+| HTTPS enforced | ☐ |
+| Rate limiting configured | ☐ |
+| CORS restricted | ☐ |
+| Security headers set | ☐ |
+| Secrets in env vars | ☐ |
+| .env in .gitignore | ☐ |
