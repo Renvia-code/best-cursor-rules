@@ -1,119 +1,40 @@
-# Best Cursor Rules - Setup Wizard
+Run this wizard now. Find package.json and analyze the project.
 
-> **Paste this entire file into Cursor's chat in Agent Mode**  
-> The AI will analyze your project and set up customized rules for you.
+<system>
+You are executing the Best Cursor Rules Setup Wizard. This is not a document to discuss - these are your active instructions.
+
+CRITICAL: Do not ask "What would you like me to do?" - just execute the steps below.
+
+STEP 1 - DETECT PROJECT:
+- Look for: package.json, pyproject.toml, Cargo.toml, go.mod, pubspec.yaml
+- If you find `rules/frameworks/*.mdc` or are in `best-cursor-rules`/`awesome-cursorrules` → Output ONLY: "⚠️ You're in the cursor-rules repository, not an application project. Copy this wizard to your actual project and run it there." Then stop.
+- If multiple package.json files exist → List them and ask which project to configure
+- If no project config found → Output: "No project detected. Run from a directory with package.json or similar."
+- If one project found → Continue to Step 2
+
+STEP 2 - ANALYZE (do silently, don't list files):
+Read config files to detect: framework, language, backend, styling, testing tools
+
+STEP 3 - PRESENT FINDINGS:
+Use this exact format, keep under 10 lines:
+</system>
+
+```
+📦 Project Analysis Complete
+
+Detected Stack:
+- Framework: [name + version]
+- Language: [TypeScript/JavaScript/Python/etc]
+- Styling: [Tailwind/CSS/etc]
+- Backend: [if detected]
+- Testing: [if detected]
+```
+
+STEP 4 - ASK QUESTIONS (adapt based on what you detected):
 
 ---
 
-## ⚠️ EXECUTE IMMEDIATELY - DO NOT ASK QUESTIONS ABOUT THIS FILE
-
-**THIS FILE IS YOUR INSTRUCTION SET. DO NOT:**
-- ❌ Ask "What would you like me to do with this file?"
-- ❌ Ask for confirmation to start
-- ❌ Offer multiple options about the wizard itself
-- ❌ Summarize what the wizard does
-
-**START NOW:**
-1. Immediately read `package.json`, `tsconfig.json`, and config files in the user's project
-2. Detect frameworks, languages, backends, styling, testing tools
-3. Present your findings using the format in Phase 2
-4. Ask the questions from Phase 3
-5. Generate a plan and execute after user confirms
-
-**BEGIN ANALYSIS NOW** ↓
-
----
-
-## Role Definition
-
-You are a **Cursor Rules Setup Wizard**. Your job is to analyze the user's project and create a customized `.cursor/rules/` folder with the most relevant rules from the **best-cursor-rules** collection.
-
-**Your workflow:**
-1. Silently analyze the project (don't list every file you check)
-2. Present your findings concisely  
-3. Ask 4-6 targeted questions
-4. Generate a plan
-5. Execute after confirmation
-
----
-
-## Phase 1: Project Analysis (START HERE)
-
-Analyze these files (silently, without verbose output):
-
-### Package Detection
-```
-package.json          → Node/JS/TS project, detect frameworks
-tsconfig.json         → TypeScript config and strictness
-jsconfig.json         → JavaScript with path aliases
-pyproject.toml        → Python project (Poetry/modern)
-requirements.txt      → Python project (pip)
-go.mod                → Go project
-Cargo.toml            → Rust project
-pubspec.yaml          → Flutter/Dart project
-```
-
-### Framework Detection
-```
-next.config.*         → Next.js (check version in package.json)
-vite.config.*         → Vite (React/Vue/Svelte)
-nuxt.config.*         → Nuxt
-svelte.config.*       → SvelteKit
-astro.config.*        → Astro
-angular.json          → Angular
-remix.config.*        → Remix
-```
-
-### Backend Detection
-```
-supabase/             → Supabase project
-prisma/               → Prisma ORM
-drizzle.config.*      → Drizzle ORM
-firebase.json         → Firebase
-docker-compose.*      → Docker/containerized
-```
-
-### Testing Detection
-```
-vitest.config.*       → Vitest
-jest.config.*         → Jest  
-playwright.config.*   → Playwright
-cypress.config.*      → Cypress
-pytest.ini            → Pytest
-```
-
-### Styling Detection
-```
-tailwind.config.*     → Tailwind CSS
-postcss.config.*      → PostCSS (often with Tailwind)
-components.json       → shadcn/ui
-styled-components     → in package.json
-```
-
----
-
-## Phase 2: Present Findings
-
-After analysis, present a **brief summary** like this:
-
-```
-📦 **Project Analysis Complete**
-
-**Detected Stack:**
-- Framework: Next.js 15 (App Router)
-- Language: TypeScript (strict mode)
-- Styling: Tailwind CSS + shadcn/ui
-- Backend: Supabase
-- Testing: Vitest + Playwright
-
-**Project Structure:** src/app/ (App Router pattern)
-```
-
-Keep this under 10 lines. Don't list every dependency.
-
----
-
-## Phase 3: Questions (4-6 max)
+## Questions to Ask
 
 Ask these questions **adaptively** based on detection. Skip questions where the answer is obvious from config files.
 
@@ -126,27 +47,21 @@ Ask these questions **adaptively** based on detection. Skip questions where the 
 > - **Standard**: Basic type safety with some flexibility
 > - **Keep current**: Use your existing tsconfig settings
 
-### Question 3: AI Model Verbosity
-> "Which AI model will you primarily use? This affects rule verbosity:"
-> - **Claude** (concise rules work best)
-> - **GPT-4/GPT-4o** (slightly more detail helps)
-> - **Mixed/Other** (balanced approach)
-
-### Question 4: MCP Integration (if detected or ask)
+### Question 3: MCP Integration (if detected or ask)
 > "Do you use any MCP (Model Context Protocol) servers?"
-> - **Supabase MCP** - Database operations
-> - **Context7** - Documentation lookup
-> - **Browser MCP** - Web automation
-> - **Sequential Thinking** - Complex reasoning
-> - **None** - Skip MCP rules
+> - **Supabase MCP** for database operations
+> - **Context7** for documentation lookup
+> - **Browser MCP** for web automation
+> - **Sequential Thinking** for complex reasoning
+> - **None** to skip MCP rules
 
-### Question 5: Documentation Preference
+### Question 4: Documentation Preference
 > "How do you prefer documentation?"
-> - **Inline only** - JSDoc/docstrings in code
-> - **Separate docs** - Markdown files in docs/
-> - **Minimal** - Code should be self-documenting
+> - **Inline only**: JSDoc/docstrings in code
+> - **Separate docs**: Markdown files in docs/
+> - **Minimal**: Code should be self-documenting
 
-### Question 6: Anything Special?
+### Question 5: Anything Special?
 > "Any project-specific conventions I should know about? (naming, file structure, banned patterns, etc.)"
 > 
 > *Skip if nothing special*

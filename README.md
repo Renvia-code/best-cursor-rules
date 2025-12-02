@@ -16,31 +16,26 @@ Skip the guesswork. These rules are battle-tested, framework-specific, and ready
 
 **Option A: Use the Setup Wizard (recommended)**
 
-1. Open your project in Cursor
+1. Open **your project** in Cursor (not this repo)
 2. Switch to **Agent Mode** 
 3. Paste the contents of [`SETUP-WIZARD.md`](./SETUP-WIZARD.md) into the chat
-4. Answer a few questions about your stack
-5. Done! The AI creates your `.cursor/rules/` folder automatically
+4. If the AI asks what to do, just say **"run it"** or **"execute the wizard"**
+5. Answer a few questions about your stack
+6. Done! The AI creates your `.cursor/rules/` folder automatically
+
+> **Note:** The wizard must be run from inside your actual project directory, not from this repository.
 
 <table>
 <tr>
 <td>
 
-### 💎 Pro Tip: Use the Best Model
+### 💎 Pro Tip
 
-**Use Claude Opus 4 or Sonnet 4 for setup.** One well-executed conversation with a frontier model saves more time than ten attempts with a weaker one.
-
-The wizard analyzes your entire project, asks intelligent questions, and generates perfectly customized rules. This is exactly the kind of complex, multi-step task where model quality compounds—every better decision cascades into better code for months.
-
-*Invest 5 minutes with the best model. Save 50 hours of corrections later.*
+Use the best model you have access to. The wizard does a lot of thinking upfront so you don't have to correct it later. Five minutes with a good model now saves hours of fixes down the road.
 
 </td>
 </tr>
 </table>
-
-> *"Talk is cheap. Show me the code."*
->
-> — **Linus Torvalds**, creator of Linux and Git
 
 ---
 
@@ -189,6 +184,12 @@ Maintained by [Renvia Technologies](https://renvia.tech) with contributions from
 Licensed under [CC0](./LICENSE) - do whatever you want with these rules.
 
 ---
+
+<p align="center">
+  <i>"Most good programmers do programming not because they expect to get paid or get adulation by the public, but because it is fun to program."</i>
+  <br>
+  <sub>— Linus Torvalds</sub>
+</p>
 
 <p align="center">
   <sub>Built with ☕ and too many terminal tabs</sub>
