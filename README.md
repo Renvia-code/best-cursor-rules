@@ -17,10 +17,32 @@ Skip the guesswork. These rules are battle-tested, framework-specific, and ready
 **Option A: Use the Setup Wizard (recommended)**
 
 1. Open your project in Cursor
-2. Switch to **Plan Mode** (`⌘⇧P` / `Ctrl+Shift+P` → "Toggle Plan Mode")
+2. Switch to **Agent Mode** 
 3. Paste the contents of [`SETUP-WIZARD.md`](./SETUP-WIZARD.md) into the chat
 4. Answer a few questions about your stack
 5. Done! The AI creates your `.cursor/rules/` folder automatically
+
+<table>
+<tr>
+<td>
+
+### 💎 Pro Tip: Use the Best Model
+
+**Use Claude Opus 4 or Sonnet 4 for setup.** One well-executed conversation with a frontier model saves more time than ten attempts with a weaker one.
+
+The wizard analyzes your entire project, asks intelligent questions, and generates perfectly customized rules. This is exactly the kind of complex, multi-step task where model quality compounds—every better decision cascades into better code for months.
+
+*Invest 5 minutes with the best model. Save 50 hours of corrections later.*
+
+</td>
+</tr>
+</table>
+
+> *"Talk is cheap. Show me the code."*
+>
+> — **Linus Torvalds**, creator of Linux and Git
+
+---
 
 **Option B: Manual Setup**
 
@@ -78,6 +100,7 @@ Skip the guesswork. These rules are battle-tested, framework-specific, and ready
 |------|-------------|
 | [`clean-code.mdc`](rules/best-practices/clean-code.mdc) | Naming, functions, DRY, SOLID |
 | [`security.mdc`](rules/best-practices/security.mdc) | Auth patterns, secrets, validation |
+| [`ai-security.mdc`](rules/best-practices/ai-security.mdc) | LLM security, prompt injection, PII filtering |
 | [`accessibility.mdc`](rules/best-practices/accessibility.mdc) | ARIA, keyboard nav, screen readers |
 
 ### Stack Presets
@@ -104,6 +127,9 @@ The Setup Wizard is a special prompt that turns Cursor into a project analyzer:
 4. **Execution** - Creates `.cursor/rules/` with customized rules
 
 The wizard adapts to your project. Using Supabase? It includes those patterns. TypeScript strict mode? It adjusts accordingly. It's not a one-size-fits-all dump of rules.
+
+> [!TIP]
+> **Why Agent Mode?** The wizard needs to read files and create your rules folder. Agent Mode gives the AI the permissions it needs to analyze your project and write the customized rules.
 
 ---
 

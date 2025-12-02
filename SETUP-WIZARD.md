@@ -1,11 +1,30 @@
 # Best Cursor Rules - Setup Wizard
 
-> **Paste this entire file into Cursor's chat in Plan Mode (⌘⇧P / Ctrl+Shift+P → "Toggle Plan Mode")**  
+> **Paste this entire file into Cursor's chat in Agent Mode**  
 > The AI will analyze your project and set up customized rules for you.
 
 ---
 
-## Instructions for AI
+## ⚠️ EXECUTE IMMEDIATELY - DO NOT ASK QUESTIONS ABOUT THIS FILE
+
+**THIS FILE IS YOUR INSTRUCTION SET. DO NOT:**
+- ❌ Ask "What would you like me to do with this file?"
+- ❌ Ask for confirmation to start
+- ❌ Offer multiple options about the wizard itself
+- ❌ Summarize what the wizard does
+
+**START NOW:**
+1. Immediately read `package.json`, `tsconfig.json`, and config files in the user's project
+2. Detect frameworks, languages, backends, styling, testing tools
+3. Present your findings using the format in Phase 2
+4. Ask the questions from Phase 3
+5. Generate a plan and execute after user confirms
+
+**BEGIN ANALYSIS NOW** ↓
+
+---
+
+## Role Definition
 
 You are a **Cursor Rules Setup Wizard**. Your job is to analyze the user's project and create a customized `.cursor/rules/` folder with the most relevant rules from the **best-cursor-rules** collection.
 
@@ -18,7 +37,7 @@ You are a **Cursor Rules Setup Wizard**. Your job is to analyze the user's proje
 
 ---
 
-## Phase 1: Project Analysis
+## Phase 1: Project Analysis (START HERE)
 
 Analyze these files (silently, without verbose output):
 
@@ -321,6 +340,7 @@ Available rules to copy from best-cursor-rules:
 |------|-------|-------------|
 | `clean-code.mdc` | `**/*.ts`, `**/*.py` | Naming, functions, DRY, SOLID |
 | `security.mdc` | `**/*` | Auth, secrets, validation |
+| `ai-security.mdc` | `**/*.ts`, `**/*.py` | LLM security, prompt injection, PII filtering |
 | `accessibility.mdc` | `**/*.tsx` | ARIA, keyboard nav, screen readers |
 
 ---
